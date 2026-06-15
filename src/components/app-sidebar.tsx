@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import {
     Sidebar,
@@ -10,7 +10,7 @@ import {
 } from '~/components/ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
 import { NewFileDialog } from './new-file-dialog'
-import { SidebarHeaderComponent } from './sidebar/sidebar-header'
+import { SidebarHeaderComponent, type FileTypeFilter } from './sidebar/sidebar-header'
 import { NavigationMenu } from './sidebar/navigation-menu'
 import { ProgrammeSection } from './sidebar/programme-section'
 import { SidebarFooterComponent } from './sidebar/sidebar-footer'
@@ -20,6 +20,9 @@ export function AppSidebar() {
     const pathname = usePathname()
     const isMobile = useMobile()
     const { setOpenMobile } = useSidebar()
+
+    const [searchTerm, setSearchTerm] = useState('')
+    const [typeFilter, setTypeFilter] = useState<FileTypeFilter>('all')
 
     const {
         isNewFileDialogOpen,
@@ -62,7 +65,13 @@ export function AppSidebar() {
     return (
         <>
             <Sidebar>
-                <SidebarHeaderComponent onNewFileClick={handleNewFileClick} />
+                <SidebarHeaderComponent
+                    onNewFileClick={handleNewFileClick}
+                    searchTerm={searchTerm}
+                    onSearchChange={setSearchTerm}
+                    typeFilter={typeFilter}
+                    onTypeFilterChange={setTypeFilter}
+                />
 
                 <SidebarSeparator />
 
@@ -78,7 +87,6 @@ export function AppSidebar() {
                 <SidebarSeparator />
 
                 <SidebarContent>
-
                     <ProgrammeSection
                         canCreateProgramme={canCreateProgramme}
                         onFileActions={fileActions}
@@ -86,6 +94,8 @@ export function AppSidebar() {
                         setSelectedFileIds={setSelectedFileIds}
                         activeFileId={activeFileId}
                         setActiveFileId={setActiveFileId}
+                        searchTerm={searchTerm}
+                        typeFilter={typeFilter}
                     />
                 </SidebarContent>
 

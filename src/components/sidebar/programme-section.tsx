@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Plus } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { FileNode } from '~/components/file-tree'
@@ -9,6 +9,7 @@ import { useFileTree } from '~/providers/file-tree-provider'
 import { NewFileDialog, type NewFileType } from '~/components/new-file-dialog'
 import { navigateToFile } from '~/lib/navigation-utils'
 import { FILE_TYPES } from '~/server/db/schema'
+import type { FileTypeFilter } from '~/components/sidebar/sidebar-header'
 import {
     SidebarGroup,
     SidebarGroupAction,
@@ -27,6 +28,34 @@ interface ProgrammeSectionProps {
     setSelectedFileIds: (ids: number[]) => void
     activeFileId?: number
     setActiveFileId: (id?: number) => void
+    searchTerm: string
+    typeFilter: FileTypeFilter
+}
+
+/**
+ * Recursively filter a file tree by node type.
+ * Structural containers (folder, programme) are kept if they contain any matching descendants.
+ */
+function filterTreeByType(nodes: FileNode[], type: FileTypeFilter): FileNode[] {
+    if (type === 'all') return nodes
+
+    return nodes.reduce<FileNode[]>((acc, node) => {
+        const isContainer = node.type === 'folder' || node.type === 'programme'
+        const nodeMatchesType = node.type === type
+
+        if (nodeMatchesType) {
+            // Node itself matches — include with all its children intact
+            acc.push(node)
+        } else if (isContainer) {
+            // Container doesn't match, but keep it if it has matching descendants
+            const filteredChildren = filterTreeByType(node.children ?? [], type)
+            if (filteredChildren.length > 0) {
+                acc.push({ ...node, children: filteredChildren })
+            }
+        }
+
+        return acc
+    }, [])
 }
 
 export function ProgrammeSection({
@@ -36,6 +65,8 @@ export function ProgrammeSection({
     setSelectedFileIds,
     activeFileId,
     setActiveFileId,
+    searchTerm,
+    typeFilter,
 }: ProgrammeSectionProps) {
     const router = useRouter()
     const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false)
@@ -44,9 +75,9 @@ export function ProgrammeSection({
     >(undefined)
     const [newFileParentId, setNewFileParentId] = useState<number | null>(null)
 
-    const { fileTree, isLoading: isFileTreeLoading } = useFileTree()
+    const { fileTree, isLoading: isFileTreeLoading, filterTreeBySearchTerm } = useFileTree()
 
-    // Helper function to find a node by ID in the file tree
+    // Helper function to find a node by ID in the full (unfiltered) file tree
     const findNodeById = (nodes: FileNode[], id: number): FileNode | null => {
         for (const node of nodes) {
             if (node.id === id) return node
@@ -57,6 +88,16 @@ export function ProgrammeSection({
         }
         return null
     }
+
+    // Apply search term filter first, then type filter
+    const displayedTree = useMemo(() => {
+        const afterSearch = searchTerm.trim()
+            ? filterTreeBySearchTerm(searchTerm)
+            : fileTree
+        return filterTreeByType(afterSearch, typeFilter)
+    }, [fileTree, searchTerm, typeFilter, filterTreeBySearchTerm])
+
+    const isFiltering = searchTerm.trim() !== '' || typeFilter !== 'all'
 
     const handleSelectFile = (id: number) => {
         setActiveFileId(id)
@@ -113,10 +154,14 @@ export function ProgrammeSection({
                         <div className="px-3 py-2 text-sm text-muted-foreground">
                             Loading files...
                         </div>
+                    ) : displayedTree.length === 0 && isFiltering ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                            No files match your search.
+                        </div>
                     ) : (
                         <div>
                             <FileTree
-                                items={fileTree}
+                                items={displayedTree}
                                 onSelectFile={handleSelectFile}
                                 activeFileId={activeFileId}
                                 selectedFileIds={selectedFileIds}

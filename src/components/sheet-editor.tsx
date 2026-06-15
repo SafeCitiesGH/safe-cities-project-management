@@ -46,6 +46,27 @@ export function SheetEditor({
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
 
+    // Rename dialog state
+    const [renameState, setRenameState] = useState<{
+        rowId: string
+        colIndex: number
+        currentText: string
+        label: string
+    } | null>(null)
+    const [renameInputValue, setRenameInputValue] = useState('')
+    const renameInputRef = useRef<HTMLInputElement>(null)
+
+    // Auto-focus and select the rename input when it opens
+    useEffect(() => {
+        if (renameState) {
+            setRenameInputValue(renameState.currentText)
+            setTimeout(() => {
+                renameInputRef.current?.focus()
+                renameInputRef.current?.select()
+            }, 50)
+        }
+    }, [renameState])
+
     // Snapshot-based undo/redo: history[historyIndex] is always the current state.
     // Undo restores history[historyIndex - 1]; Redo restores history[historyIndex + 1].
     // This covers cell edits AND structural changes (add column, add row).
@@ -108,6 +129,40 @@ export function SheetEditor({
             debouncedSave(newSheet)
         },
         [historyIndex, debouncedSave]
+    )
+
+    // Apply a rename to a header cell (column header or row label)
+    const applyRename = useCallback(
+        (newText: string) => {
+            if (!renameState) return
+            const newSheet = {
+                ...sheet,
+                rows: sheet.rows.map((row) => ({
+                    ...row,
+                    cells: [...row.cells] as DefaultCellTypes[],
+                })),
+            }
+            const rowIndex = newSheet.rows.findIndex(
+                (r) => r.rowId === renameState.rowId
+            )
+            if (rowIndex === -1) {
+                setRenameState(null)
+                return
+            }
+            const cell = newSheet.rows[rowIndex]!.cells[renameState.colIndex]
+            if (!cell) {
+                setRenameState(null)
+                return
+            }
+            newSheet.rows[rowIndex]!.cells[renameState.colIndex] = {
+                ...cell,
+                text: newText,
+            } as DefaultCellTypes
+            newSheet.cells = newSheet.rows.map((r) => r.cells)
+            commitChange(newSheet)
+            setRenameState(null)
+        },
+        [renameState, sheet, commitChange]
     )
 
     // Undo: restore the previous snapshot
@@ -353,7 +408,7 @@ export function SheetEditor({
         commitChange(newSheet)
     }
 
-    // Right-click context menu: adds "Delete Column" for user-added (non-protected) columns
+    // Right-click context menu: rename column, rename row, delete column
     const handleContextMenu = useCallback(
         (
             selectedRowIds: Id[],
@@ -363,38 +418,83 @@ export function SheetEditor({
         ): MenuOption[] => {
             if (readOnly) return menuOptions
 
-            // Only offer delete when columns are selected and ALL selected columns
-            // are user-added (not form-data protected, not the row-header column 0)
-            const deletableCols = (selectedColIds as number[]).filter(
+            const newOptions = [...menuOptions]
+            const colIds = selectedColIds as number[]
+            const rowIds = selectedRowIds as string[]
+            const protectedRowIds = ['header', 'alphabetical-header', 'form-field-header']
+
+            // Rename Column: right-click on a header row cell (single col, col > 0)
+            const activeHeaderRowId = rowIds.find(
+                (r) => r === 'header' || r === 'alphabetical-header'
+            )
+            if (activeHeaderRowId && colIds.length === 1 && colIds[0]! > 0) {
+                const colIndex = colIds[0]!
+                const headerRow = sheet.rows.find((r) => r.rowId === activeHeaderRowId)
+                const currentText =
+                    (headerRow?.cells[colIndex] as { text?: string })?.text ?? ''
+                newOptions.push({
+                    id: 'renameColumn',
+                    label: 'Rename Column',
+                    handler: () => {
+                        setRenameState({
+                            rowId: activeHeaderRowId,
+                            colIndex,
+                            currentText,
+                            label: 'Column',
+                        })
+                    },
+                })
+            }
+
+            // Rename Row: right-click on col 0, single non-header row
+            if (
+                colIds.includes(0) &&
+                rowIds.length === 1 &&
+                !protectedRowIds.includes(rowIds[0]!)
+            ) {
+                const rowId = rowIds[0]!
+                const row = sheet.rows.find((r) => r.rowId === rowId)
+                const currentText = (row?.cells[0] as { text?: string })?.text ?? ''
+                newOptions.push({
+                    id: 'renameRow',
+                    label: 'Rename Row',
+                    handler: () => {
+                        setRenameState({
+                            rowId,
+                            colIndex: 0,
+                            currentText,
+                            label: 'Row',
+                        })
+                    },
+                })
+            }
+
+            // Delete Column: any user-added, non-protected column (col > 0)
+            const deletableCols = colIds.filter(
                 (colId) =>
                     colId > 0 &&
                     (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
             )
-
-            if (deletableCols.length === 0) return menuOptions
-
-            return [
-                ...menuOptions,
-                {
+            if (deletableCols.length > 0) {
+                newOptions.push({
                     id: 'deleteColumn',
                     label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
                     handler: () => {
-                        // Sort descending so we can splice from the right without
-                        // shifting earlier indices
+                        // Sort descending so splicing doesn't shift earlier indices
                         const toDelete = [...deletableCols].sort((a, b) => b - a)
                         const newSheet = { ...sheet }
-
                         newSheet.rows = newSheet.rows.map((row) => {
                             const newCells = [...row.cells] as DefaultCellTypes[]
                             toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
                             return { ...row, cells: newCells }
                         })
                         newSheet.cells = newSheet.rows.map((row) => row.cells)
-
                         commitChange(newSheet)
                     },
-                },
-            ]
+                })
+            }
+
+            return newOptions
         },
         [readOnly, isLiveSyncSheet, formDataColumnCount, sheet, commitChange]
     )
@@ -469,6 +569,16 @@ export function SheetEditor({
                             <Plus className="h-4 w-4" />
                             Add Column
                         </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={addRow}
+                            disabled={updateMutation.isPending}
+                            className="flex items-center gap-2"
+                        >
+                            <Plus className="h-4 w-4" />
+                            Add Row
+                        </Button>
                     </div>
                 </div>
             )}
@@ -540,6 +650,48 @@ export function SheetEditor({
                     />
                 </div>
             </div>
+
+            {/* Rename Column / Row dialog */}
+            {renameState && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+                    onMouseDown={(e) => {
+                        if (e.target === e.currentTarget) setRenameState(null)
+                    }}
+                >
+                    <div className="bg-background border rounded-lg shadow-lg p-4 w-72">
+                        <h3 className="text-sm font-medium mb-3">
+                            Rename {renameState.label}
+                        </h3>
+                        <input
+                            ref={renameInputRef}
+                            type="text"
+                            value={renameInputValue}
+                            onChange={(e) => setRenameInputValue(e.target.value)}
+                            className="w-full border rounded px-3 py-1.5 text-sm mb-3 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                                if (e.key === 'Enter') applyRename(renameInputValue)
+                                if (e.key === 'Escape') setRenameState(null)
+                            }}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setRenameState(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={() => applyRename(renameInputValue)}
+                            >
+                                Rename
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
