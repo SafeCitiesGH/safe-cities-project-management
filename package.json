@@ -68,6 +68,7 @@
         "@trpc/client": "^11.0.0",
         "@trpc/react-query": "^11.0.0",
         "@trpc/server": "^11.0.0",
+        "bcryptjs": "^3.0.2",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "date-fns": "^3.6.0",
@@ -98,6 +99,7 @@
     },
     "devDependencies": {
         "@eslint/eslintrc": "^3.3.1",
+        "@types/bcryptjs": "^2.4.6",
         "@types/node": "^20.14.10",
         "@types/react": "^19.1.6",
         "@types/react-dom": "^19.1.5",

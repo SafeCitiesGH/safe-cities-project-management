@@ -1,0 +1,60 @@
+# ============================================================
+# Supabase Keep-Alive Workflow
+# ============================================================
+# Purpose:
+#   Supabase free-tier databases pause after 7 days of inactivity
+#   and are fully deactivated after 90 days. This workflow pings
+#   the Supabase REST API on a schedule to prevent both thresholds.
+#
+# Security model:
+#   - Uses ONLY the anon (public) key — read-only, no elevated privileges.
+#   - Credentials are stored as GitHub repository Secrets, never hardcoded.
+#   - The ping is a GET request that returns no user data.
+#   - No writes, no deletes, no schema access.
+#
+# Setup instructions (one-time, done by repo owner):
+#   1. Go to: https://github.com/<org>/<repo>/settings/secrets/actions
+#   2. Add two repository secrets:
+#        SUPABASE_URL      → e.g. https://cycfkkfxngjbmqpojiky.supabase.co
+#        SUPABASE_ANON_KEY → the anon/public JWT from Supabase > Project Settings > API
+#   3. That's it. The workflow runs automatically every 3 days.
+# ============================================================
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Every 3 days at 12:00 UTC — safely within the 7-day pause window.
+    # Cron syntax: minute hour day-of-month month day-of-week
+    - cron: "0 12 */3 * *"
+
+  # Allows manual trigger from the GitHub Actions tab for testing.
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Supabase database
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send keep-alive ping to Supabase REST API
+        run: |
+          echo "Pinging Supabase at ${{ secrets.SUPABASE_URL }} ..."
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 15 \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/")
+
+          echo "HTTP response status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "✅ Keep-alive ping successful. Database is active."
+          elif [ "$HTTP_STATUS" -eq 503 ]; then
+            echo "⚠️  Supabase returned 503 — database is paused. Log in to https://supabase.com to manually restore it."
+            exit 1
+          else
+            echo "❌ Unexpected HTTP status $HTTP_STATUS. Check your SUPABASE_URL and SUPABASE_ANON_KEY secrets."
+            exit 1
+          fi

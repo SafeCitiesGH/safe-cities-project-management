@@ -33,7 +33,40 @@ import {
 import { getFileAncestors } from '~/lib/permissions'
 import { clearAllPermissionCaches } from '~/lib/permissions-ultra-fast'
 import { saveVersionHistoryWithDeduplication } from '~/lib/version-history-utils'
+import {
+    hashFilePassword,
+    verifyFilePasswordHash,
+    registerPasswordAttempt,
+    clearPasswordAttempts,
+} from '~/lib/file-password'
 import { TRPCError } from '@trpc/server'
+
+// Strips the sensitive password hash from a file row before returning to the client.
+function stripPasswordHash<T extends { passwordHash?: string | null }>(
+    file: T
+): Omit<T, 'passwordHash'> {
+    const { passwordHash: _omit, ...rest } = file
+    return rest
+}
+
+// Explicit column allow-list for client-facing file queries. Includes the
+// protected flag (for the lock icon) but never the passwordHash.
+const PUBLIC_FILE_COLUMNS = {
+    id: true,
+    name: true,
+    type: true,
+    parentId: true,
+    slug: true,
+    order: true,
+    isPublic: true,
+    createdAt: true,
+    updatedAt: true,
+    createdBy: true,
+    updatedBy: true,
+    path: true,
+    mimetype: true,
+    isPasswordProtected: true,
+} as const
 
 export const filesRouter = createTRPCRouter({
     // Create a new file (page, sheet, folder, form, or upload)
@@ -56,10 +89,18 @@ export const filesRouter = createTRPCRouter({
                 // For uploads, accept path and mimetype (not required for others)
                 path: z.string().optional(),
                 mimetype: z.string().optional(),
+                // Optional password protection (any file type). The client sends
+                // the final password after confirming it; we hash it here.
+                password: z.string().min(4).optional(),
             })
         )
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
+
+            // Hash the password if password protection was requested
+            const passwordHash = input.password
+                ? await hashFilePassword(input.password)
+                : null
 
             // Create the file record
             const [file] = await ctx.db
@@ -82,6 +123,8 @@ export const filesRouter = createTRPCRouter({
                         input.type === FILE_TYPES.UPLOAD
                             ? input.mimetype || null
                             : null,
+                    isPasswordProtected: passwordHash !== null,
+                    passwordHash,
                 })
                 .returning()
 
@@ -176,13 +219,30 @@ export const filesRouter = createTRPCRouter({
                 }
             }
 
-            return file
+            return file ? stripPasswordHash(file) : file
         }),
 
     // Get file tree structure
     getFileTree: publicProcedure.query(async ({ ctx }) => {
         const allFiles = await ctx.db.query.files.findMany({
             orderBy: [asc(files.order), asc(files.name)],
+            columns: {
+                // Explicit selection so the sensitive passwordHash is never exposed
+                id: true,
+                name: true,
+                type: true,
+                parentId: true,
+                slug: true,
+                order: true,
+                isPublic: true,
+                createdAt: true,
+                updatedAt: true,
+                createdBy: true,
+                updatedBy: true,
+                path: true,
+                mimetype: true,
+                isPasswordProtected: true,
+            },
         })
 
         // Convert flat list to tree structure
@@ -224,6 +284,7 @@ export const filesRouter = createTRPCRouter({
                     order: true,
                     path: true,
                     mimetype: true,
+                    isPasswordProtected: true,
                 },
             }),
             getUserPermissionContext(userId),
@@ -278,6 +339,8 @@ export const filesRouter = createTRPCRouter({
                         FILE_TYPES.PROGRAMME,
                     ])
                     .optional(),
+                // Password supplied by the unlock dialog for protected files.
+                password: z.string().optional(),
             })
         )
         .query(async ({ ctx, input }) => {
@@ -324,6 +387,39 @@ export const filesRouter = createTRPCRouter({
                 })
             }
 
+            // Password gate (Feature 2). Admins bypass the prompt entirely.
+            // Non-admins must supply the correct password every time, since no
+            // unlock state is cached. The sentinel messages let the client
+            // distinguish "needs password" / "wrong password" from a plain denial.
+            if (file.isPasswordProtected && !permissionContext.isAdmin) {
+                if (!input.password) {
+                    throw new TRPCError({
+                        code: 'UNAUTHORIZED',
+                        message: 'PASSWORD_REQUIRED',
+                    })
+                }
+
+                const throttle = registerPasswordAttempt(userId, file.id)
+                if (!throttle.allowed) {
+                    throw new TRPCError({
+                        code: 'TOO_MANY_REQUESTS',
+                        message: 'PASSWORD_THROTTLED',
+                    })
+                }
+
+                const ok = await verifyFilePasswordHash(
+                    input.password,
+                    file.passwordHash
+                )
+                if (!ok) {
+                    throw new TRPCError({
+                        code: 'UNAUTHORIZED',
+                        message: 'PASSWORD_INCORRECT',
+                    })
+                }
+                clearPasswordAttempts(userId, file.id)
+            }
+
             let content = null
 
             // Get content based on file type
@@ -341,9 +437,65 @@ export const filesRouter = createTRPCRouter({
             }
 
             return {
-                ...file,
+                ...stripPasswordHash(file),
                 content,
             }
+        }),
+
+    // Verify a file's password without returning content (Feature 2).
+    // Used by the unlock dialog before it requests the protected content.
+    verifyFilePassword: protectedProcedure
+        .input(
+            z.object({
+                fileId: z.number(),
+                password: z.string(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const file = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.fileId),
+                columns: {
+                    id: true,
+                    isPasswordProtected: true,
+                    passwordHash: true,
+                },
+            })
+            if (!file) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'File not found',
+                })
+            }
+
+            // Unprotected files are trivially "unlocked"
+            if (!file.isPasswordProtected) return { ok: true }
+
+            // Admins bypass the password
+            const isAdmin =
+                (
+                    await ctx.db.query.users.findFirst({
+                        where: eq(users.id, userId),
+                        columns: { role: true },
+                    })
+                )?.role === 'admin'
+            if (isAdmin) return { ok: true }
+
+            const throttle = registerPasswordAttempt(userId, file.id)
+            if (!throttle.allowed) {
+                throw new TRPCError({
+                    code: 'TOO_MANY_REQUESTS',
+                    message: 'Too many attempts. Please wait a moment.',
+                })
+            }
+
+            const ok = await verifyFilePasswordHash(
+                input.password,
+                file.passwordHash
+            )
+            if (ok) clearPasswordAttempts(userId, file.id)
+            return { ok }
         }),
 
     // Update file metadata (name, parent, order, etc.)
@@ -680,6 +832,7 @@ export const filesRouter = createTRPCRouter({
             return await ctx.db.query.files.findMany({
                 where: eq(files.type, input.type),
                 orderBy: [desc(files.createdAt)],
+                columns: PUBLIC_FILE_COLUMNS,
             })
         }),
 
@@ -810,6 +963,7 @@ export const filesRouter = createTRPCRouter({
             const allPrograms = await ctx.db.query.files.findMany({
                 where: eq(files.type, input.type),
                 orderBy: [desc(files.createdAt)],
+                columns: PUBLIC_FILE_COLUMNS,
             })
             console.log('All programs:', allPrograms)
 

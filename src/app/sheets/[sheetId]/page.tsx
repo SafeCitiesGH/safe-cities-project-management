@@ -6,6 +6,7 @@ import { api } from '~/trpc/react'
 import { SheetEditor } from '~/components/sheet-editor'
 import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
+import { FileUnlockDialog } from '~/components/file-unlock-dialog'
 import { createEmptySheet, type SheetData } from '~/lib/sheet-utils'
 import { toast } from '~/hooks/use-toast'
 
@@ -24,19 +25,31 @@ export default function SheetPage() {
         null
     )
 
+    // Password supplied via the unlock dialog for protected files (Feature 2)
+    const [filePassword, setFilePassword] = useState<string | undefined>(
+        undefined
+    )
+
     // Fetch sheet from the server using the unified files router with type validation
-    const { data: sheet, isLoading } = api.files.getById.useQuery(
+    const {
+        data: sheet,
+        isLoading,
+        error,
+    } = api.files.getById.useQuery(
         {
             id: sheetId,
             expectedType: 'sheet',
+            password: filePassword,
         },
         {
             enabled: !!sheetId,
             retry: (failureCount, error) => {
-                // Don't retry on permission or type validation errors
+                // Don't retry on permission, type, or password errors
                 if (
                     error?.data?.code === 'FORBIDDEN' ||
-                    error?.data?.code === 'BAD_REQUEST'
+                    error?.data?.code === 'BAD_REQUEST' ||
+                    error?.data?.code === 'UNAUTHORIZED' ||
+                    error?.data?.code === 'TOO_MANY_REQUESTS'
                 ) {
                     return false
                 }
@@ -44,6 +57,11 @@ export default function SheetPage() {
             },
         }
     )
+
+    const needsPassword =
+        error?.data?.code === 'UNAUTHORIZED' &&
+        (error.message === 'PASSWORD_REQUIRED' ||
+            error.message === 'PASSWORD_INCORRECT')
 
     // Get user's permission for this file using the hierarchical permission system
     const { data: userPermission } = api.permissions.getUserPermission.useQuery(
@@ -76,6 +94,15 @@ export default function SheetPage() {
                     </div>
                 </div>
             </div>
+        )
+    }
+
+    if (needsPassword) {
+        return (
+            <FileUnlockDialog
+                fileId={sheetId}
+                onUnlocked={(pw) => setFilePassword(pw)}
+            />
         )
     }
 
