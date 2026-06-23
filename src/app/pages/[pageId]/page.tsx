@@ -6,6 +6,7 @@ import { toast } from '~/hooks/use-toast'
 import { SimpleEditor } from '~/components/tiptap-templates/simple/simple-editor'
 import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
+import { FileUnlockDialog } from '~/components/file-unlock-dialog'
 import { api } from '~/trpc/react'
 
 type Permission = 'view' | 'comment' | 'edit'
@@ -14,6 +15,11 @@ export default function PageView() {
     const params = useParams()
     const router = useRouter()
     const pageId = Number((params?.pageId ?? '') as string)
+
+    // Password supplied via the unlock dialog for protected files (Feature 2)
+    const [filePassword, setFilePassword] = useState<string | undefined>(
+        undefined
+    )
 
     // Fetch page data using tRPC with type validation
     const {
@@ -24,14 +30,17 @@ export default function PageView() {
         {
             id: pageId,
             expectedType: 'page',
+            password: filePassword,
         },
         {
             enabled: !!pageId,
             retry: (failureCount, error) => {
-                // Don't retry on permission or type validation errors
+                // Don't retry on permission, type, or password errors
                 if (
                     error?.data?.code === 'FORBIDDEN' ||
-                    error?.data?.code === 'BAD_REQUEST'
+                    error?.data?.code === 'BAD_REQUEST' ||
+                    error?.data?.code === 'UNAUTHORIZED' ||
+                    error?.data?.code === 'TOO_MANY_REQUESTS'
                 ) {
                     return false
                 }
@@ -39,6 +48,12 @@ export default function PageView() {
             },
         }
     )
+
+    // Detect the password gate so we can show the unlock prompt
+    const needsPassword =
+        error?.data?.code === 'UNAUTHORIZED' &&
+        (error.message === 'PASSWORD_REQUIRED' ||
+            error.message === 'PASSWORD_INCORRECT')
 
     // Get user's permission for this file using the hierarchical permission system
     const { data: userPermission, isLoading: isPermissionLoading } =
@@ -197,6 +212,15 @@ export default function PageView() {
                     </div>
                 </div>
             </div>
+        )
+    }
+
+    if (needsPassword) {
+        return (
+            <FileUnlockDialog
+                fileId={pageId}
+                onUnlocked={(pw) => setFilePassword(pw)}
+            />
         )
     }
 

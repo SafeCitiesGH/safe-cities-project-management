@@ -2,7 +2,14 @@ import { z } from 'zod'
 import { eq, ne, and, desc, asc, sql, inArray, gt } from 'drizzle-orm'
 
 import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc'
-import { messages, files, users, notifications, filePermissions } from '~/server/db/schema'
+import {
+    messages,
+    files,
+    users,
+    notifications,
+    filePermissions,
+    effectivePermissions,
+} from '~/server/db/schema'
 
 export const chatRouter = createTRPCRouter({
     // Get messages for a specific file (with optional since and limit for fast incremental fetching)
@@ -173,12 +180,16 @@ export const chatRouter = createTRPCRouter({
             })
             fileIds = allFiles.map(f => f.id)
         } else {
-            // For non-admins, get their accessible files
-            const userPermissions = await ctx.db.query.filePermissions.findMany({
-                where: eq(filePermissions.userId, userId),
-                columns: { fileId: true },
-            })
-            fileIds = userPermissions.map(p => p.fileId)
+            // For non-admins, use the effective-permission cache so that a
+            // programme-level assignment also surfaces chats on every
+            // descendant page/sheet/form (inherited access), not just files
+            // the user was granted directly.
+            const userPermissions =
+                await ctx.db.query.effectivePermissions.findMany({
+                    where: eq(effectivePermissions.userId, userId),
+                    columns: { fileId: true },
+                })
+            fileIds = userPermissions.map((p) => p.fileId)
         }
 
         if (fileIds.length === 0) {
