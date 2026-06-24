@@ -6,6 +6,7 @@ import {
     createTRPCRouter,
     protectedProcedure,
     publicProcedure,
+    adminProcedure,
 } from '~/server/api/trpc'
 import { ROLES, roleSchema, rolesEnum, users } from '~/server/db/schema'
 import { TRPCError } from '@trpc/server'
@@ -111,7 +112,8 @@ export const userRouter = createTRPCRouter({
         return allUsers
     }),
 
-    updateUserRole: protectedProcedure
+    // Admin-only: changing a user's role is a privilege-escalation surface
+    updateUserRole: adminProcedure
         .input(
             z.object({
                 id: z.string(),
@@ -205,8 +207,8 @@ export const userRouter = createTRPCRouter({
         return newUser
     }),
 
-    // Delete user from both Clerk and database
-    deleteUser: protectedProcedure
+    // Admin-only: deleting a user is destructive and must be restricted
+    deleteUser: adminProcedure
         .input(z.object({ userId: z.string() }))
         .mutation(async ({ ctx, input }) => {
             try {
