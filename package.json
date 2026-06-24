@@ -88,7 +88,7 @@
         "react-markdown": "^10.1.0",
         "server-only": "^0.0.1",
         "superjson": "^2.2.1",
-        "svix": "^1.66.0",
+        "svix": "^1.96.0",
         "tailwind-merge": "^3.3.0",
         "tailwindcss-animate": "^1.0.7",
         "tiptap-unique-id": "^2.10.3",
