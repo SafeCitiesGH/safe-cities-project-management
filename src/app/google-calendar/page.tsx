@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useEffect, type FormEvent } from 'react'
+import { Suspense, useMemo, useState, useEffect, type FormEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { CalendarDays, Plus } from 'lucide-react'
 import { format } from 'date-fns'
@@ -165,7 +165,7 @@ function getDateKey(date: Date) {
   return format(date, 'yyyy-MM-dd')
 }
 
-export default function GoogleCalendarPage() {
+function GoogleCalendarPageContent() {
   const searchParams = useSearchParams()
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -650,5 +650,13 @@ export default function GoogleCalendarPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+export default function GoogleCalendarPage() {
+  return (
+    <Suspense fallback={<div className="h-screen bg-background" />}>
+      <GoogleCalendarPageContent />
+    </Suspense>
   )
 }
