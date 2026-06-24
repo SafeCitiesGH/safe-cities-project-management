@@ -284,6 +284,29 @@ export const users = createTable('user', (d) => ({
     updatedAt: d.timestamp().defaultNow().notNull(),
 }))
 
+export const googleCalendarConnections = createTable(
+    'google_calendar_connection',
+    (d) => ({
+        userId: d
+            .text()
+            .primaryKey()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        googleAccountId: d.varchar({ length: 255 }),
+        googleEmail: d.varchar({ length: 320 }),
+        accessToken: d.text(),
+        refreshToken: d.text().notNull(),
+        scope: d.text(),
+        tokenType: d.varchar({ length: 64 }),
+        expiryDate: d.timestamp(),
+        createdAt: d.timestamp().defaultNow().notNull(),
+        updatedAt: d.timestamp().defaultNow().notNull(),
+    }),
+    (t) => [
+        index('google_calendar_connection_email_idx').on(t.googleEmail),
+        index('google_calendar_connection_updated_idx').on(t.updatedAt),
+    ]
+)
+
 export const messages = createTable(
     'message',
     (d) => ({
@@ -561,6 +584,19 @@ export type User = {
     updatedAt: Date
 }
 
+export type GoogleCalendarConnection = {
+    userId: string
+    googleAccountId: string | null
+    googleEmail: string | null
+    accessToken: string | null
+    refreshToken: string
+    scope: string | null
+    tokenType: string | null
+    expiryDate: Date | null
+    createdAt: Date
+    updatedAt: Date
+}
+
 export type Message = {
     id: number
     fileId: number | null
@@ -611,7 +647,18 @@ export const usersRelations = relations(users, ({ many }) => ({
     messages: many(messages),
     comments: many(comments),
     formSubmissions: many(formSubmissions),
+    googleCalendarConnections: many(googleCalendarConnections),
 }))
+
+export const googleCalendarConnectionsRelations = relations(
+    googleCalendarConnections,
+    ({ one }) => ({
+        user: one(users, {
+            fields: [googleCalendarConnections.userId],
+            references: [users.id],
+        }),
+    })
+)
 
 export const filesRelations = relations(files, ({ one, many }) => ({
     parent: one(files, {
