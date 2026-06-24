@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { ChevronRight, Folder, FileText, ChevronDown, MoreHorizontal, Edit2, Trash2, Plus,
-    AlertCircle, ClipboardList, Sheet, Share2, UploadCloud } from 'lucide-react'
+    AlertCircle, ClipboardList, Sheet, Share2, UploadCloud, Lock, Users } from 'lucide-react'
 import { cn } from '~/lib/utils'
 import { DndProvider, useDrag, useDrop } from 'react-dnd'
 import { HTML5Backend } from 'react-dnd-html5-backend'
@@ -14,6 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog'
 import { api } from '~/trpc/react'
 import { ShareModal } from '~/components/share-modal'
+import { ProgrammeMembersPanel } from '~/components/programme-members-panel'
 import { useBatchPermissions } from '~/hooks/use-batch-permissions'
 import { useRouter } from 'next/navigation'
 
@@ -24,6 +25,7 @@ export type FileNode = {
     type?: 'folder' | 'page' | 'sheet' | 'form' | 'upload' | 'programme'
     isFolder?: boolean
     parentId?: number | null
+    isPasswordProtected?: boolean
     children?: FileNode[]
 }
 
@@ -172,6 +174,7 @@ function FileTreeNode({
     const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
     const [isShareModalOpen, setIsShareModalOpen] = useState(false)
+    const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false)
     const [renameValue, setRenameValue] = useState(node.filename || node.name || '')
 
     const expandTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -185,6 +188,13 @@ function FileTreeNode({
     // Get permissions for this file from the batch query
     const permissions = getPermissions(node.id)
     const { userPermission, canEdit, canShare } = permissions
+
+    // Admin check for programme membership management (Feature 1).
+    // getProfile is cached/deduped by react-query, so calling it per node is fine.
+    const { data: userProfile } = api.user.getProfile.useQuery()
+    const isAdmin =
+        !!userProfile && 'role' in userProfile && userProfile.role === 'admin'
+    const canManageMembers = isAdmin && node.type === 'programme'
 
     // Permission checks based on hierarchical permission levels
     const canCreate = canEdit // Edit permission anywhere in hierarchy allows creating files
@@ -582,6 +592,12 @@ function FileTreeNode({
                         >
                             {node.filename || node.name}
                         </span>
+                        {node.isPasswordProtected && (
+                            <Lock
+                                className="h-3.5 w-3.5 mr-1 shrink-0 text-muted-foreground"
+                                aria-label="Password protected"
+                            />
+                        )}
                         {/* Only show dropdown if user has any permissions */}
                         {(canCreate || canShare || canRename || canDelete) && (
                             <DropdownMenu>
@@ -661,6 +677,18 @@ function FileTreeNode({
                                         </DropdownMenuItem>
                                     </>
                                 )}
+                                {canManageMembers && (
+                                    <DropdownMenuItem
+                                        onClick={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            setIsMembersPanelOpen(true)
+                                        }}
+                                    >
+                                        <Users size={14} className="mr-2" />{' '}
+                                        Manage members
+                                    </DropdownMenuItem>
+                                )}
                                 {canShare && (
                                     <DropdownMenuItem
                                         onClick={(e) => {
@@ -728,6 +756,12 @@ function FileTreeNode({
                         <span className="text-sm truncate flex-1">
                             {node.filename || node.name}
                         </span>
+                        {node.isPasswordProtected && (
+                            <Lock
+                                className="h-3.5 w-3.5 mr-1 shrink-0 text-muted-foreground"
+                                aria-label="Password protected"
+                            />
+                        )}
                         {/* Only show dropdown if user has any permissions */}
                         {(canShare || canRename || canDelete) && (
                         <DropdownMenu>
@@ -814,6 +848,16 @@ function FileTreeNode({
                         ))}
                     </div>
                 )}
+
+            {/* Programme members panel (admin-only, Feature 1) */}
+            {canManageMembers && (
+                <ProgrammeMembersPanel
+                    isOpen={isMembersPanelOpen}
+                    onClose={() => setIsMembersPanelOpen(false)}
+                    programmeId={node.id}
+                    programmeName={node.filename || node.name || 'Programme'}
+                />
+            )}
 
             {/* Rename Dialog */}
             <Dialog

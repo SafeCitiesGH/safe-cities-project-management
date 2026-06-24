@@ -1,6 +1,10 @@
 import { eq, and, asc } from 'drizzle-orm'
 import { z } from 'zod'
-import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc'
+import {
+    createTRPCRouter,
+    protectedProcedure,
+    adminProcedure,
+} from '~/server/api/trpc'
 import {
     filePermissions,
     permissionSchema,
@@ -8,6 +12,7 @@ import {
     users,
     notifications,
     effectivePermissions,
+    FILE_TYPES,
     type SharePermission,
 } from '~/server/db/schema'
 import {
@@ -356,5 +361,100 @@ export const permissionsRouter = createTRPCRouter({
                 invalidatedFiles: [input.fileId, ...descendants],
                 message: `Minimal cache invalidation completed for ${descendants.length + 1} files`,
             }
+        }),
+
+    // ---- Feature 1: Programme membership (admin-only) ----
+
+    // List the users directly assigned to a programme, with their access level
+    getProgrammeMembers: adminProcedure
+        .input(z.object({ programmeId: z.number() }))
+        .query(async ({ ctx, input }) => {
+            // Confirm the target file is actually a programme
+            const programme = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.programmeId),
+                columns: { id: true, type: true, name: true },
+            })
+            if (!programme || programme.type !== FILE_TYPES.PROGRAMME) {
+                throw new TRPCError({
+                    code: 'BAD_REQUEST',
+                    message: 'Target file is not a programme',
+                })
+            }
+            return await getFilePermissions(input.programmeId)
+        }),
+
+    // Assign a user to a programme at a chosen access level (admin picks the level)
+    assignUserToProgramme: adminProcedure
+        .input(
+            z.object({
+                programmeId: z.number(),
+                userId: z.string(),
+                permission: permissionSchema.default('view'),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId: currentUserId } = ctx.auth
+
+            // Confirm the target file is a programme before granting
+            const programme = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.programmeId),
+                columns: { id: true, type: true, name: true },
+            })
+            if (!programme || programme.type !== FILE_TYPES.PROGRAMME) {
+                throw new TRPCError({
+                    code: 'BAD_REQUEST',
+                    message: 'Target file is not a programme',
+                })
+            }
+
+            // Grant (or update) the direct permission; this rebuilds the
+            // effective-permission cache so the user also gains access to all
+            // descendant pages/sheets/forms via inheritance.
+            const result = await setFilePermission(
+                input.programmeId,
+                input.userId,
+                input.permission
+            )
+
+            // Notify the assigned user (skip self-assignment)
+            if (input.userId !== currentUserId) {
+                const currentUser = await ctx.db.query.users.findFirst({
+                    where: eq(users.id, currentUserId),
+                    columns: { name: true },
+                })
+                await ctx.db.insert(notifications).values({
+                    userId: input.userId,
+                    pageId: input.programmeId,
+                    content: `${currentUser?.name ?? 'An admin'} assigned you to "${programme.name}" (${input.permission} access)`,
+                    type: 'share',
+                    read: false,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                })
+            }
+
+            return result
+        }),
+
+    // Remove a user's assignment from a programme
+    removeUserFromProgramme: adminProcedure
+        .input(
+            z.object({
+                programmeId: z.number(),
+                userId: z.string(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const programme = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.programmeId),
+                columns: { id: true, type: true },
+            })
+            if (!programme || programme.type !== FILE_TYPES.PROGRAMME) {
+                throw new TRPCError({
+                    code: 'BAD_REQUEST',
+                    message: 'Target file is not a programme',
+                })
+            }
+            return await removeFilePermission(input.programmeId, input.userId)
         }),
 })

@@ -99,6 +99,9 @@ export const files = createTable(
             .references(() => users.id, { onDelete: 'set null' }),
         path: d.varchar({ length: 512 }), // Storage path for uploaded file
         mimetype: d.varchar({ length: 128 }), // MIME type for uploaded file
+        // Optional per-file password protection (access gate, content not encrypted at rest)
+        isPasswordProtected: d.boolean().default(false),
+        passwordHash: d.varchar({ length: 255 }), // bcrypt hash; null when unprotected. NEVER sent to client.
     }),
     (t) => [
         index('file_parent_idx').on(t.parentId),
@@ -467,6 +470,8 @@ export type File = {
     updatedBy: string | null
     path: string | null
     mimetype: string | null
+    isPasswordProtected: boolean
+    passwordHash: string | null
 }
 
 export type PageContent = {

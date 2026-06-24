@@ -6,6 +6,9 @@ import {
     type CellChange,
     type Column,
     type DefaultCellTypes,
+    type Id,
+    type MenuOption,
+    type SelectionMode,
 } from '@silevis/reactgrid'
 import '@silevis/reactgrid/styles.scss'
 import { applyChangesToSheet, type SheetData } from '~/lib/sheet-utils'
@@ -43,14 +46,38 @@ export function SheetEditor({
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
 
-    // Undo/Redo state
-    const [cellChangesHistory, setCellChangesHistory] = useState<
-        CellChange[][]
-    >([])
-    const [historyIndex, setHistoryIndex] = useState(-1)
+    // Rename dialog state
+    const [renameState, setRenameState] = useState<{
+        rowId: string
+        colIndex: number
+        currentText: string
+        label: string
+    } | null>(null)
+    const [renameInputValue, setRenameInputValue] = useState('')
+    const renameInputRef = useRef<HTMLInputElement>(null)
+
+    // Auto-focus and select the rename input when it opens
+    useEffect(() => {
+        if (renameState) {
+            setRenameInputValue(renameState.currentText)
+            setTimeout(() => {
+                renameInputRef.current?.focus()
+                renameInputRef.current?.select()
+            }, 50)
+        }
+    }, [renameState])
+
+    // Snapshot-based undo/redo: history[historyIndex] is always the current state.
+    // Undo restores history[historyIndex - 1]; Redo restores history[historyIndex + 1].
+    // This covers cell edits AND structural changes (add column, add row).
+    const [history, setHistory] = useState<SheetData[]>([initialData])
+    const [historyIndex, setHistoryIndex] = useState(0)
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+    // Ref to the outer container div, used for Escape-to-deselect
+    const containerRef = useRef<HTMLDivElement>(null)
 
     const isLiveSyncSheet = syncMetadata?.isLiveSync
     const formDataColumnCount = syncMetadata?.formDataColumnCount || 0
@@ -58,7 +85,6 @@ export function SheetEditor({
     const updateMutation = api.files.updateSheetContent.useMutation({
         onSuccess: () => {
             onSavingStatusChange?.('saved')
-            // Reset status after a delay
             setTimeout(() => onSavingStatusChange?.('idle'), 2000)
         },
         onError: (error) => {
@@ -77,29 +103,97 @@ export function SheetEditor({
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
-
             saveTimeoutRef.current = setTimeout(() => {
                 onSavingStatusChange?.('saving')
                 updateMutation.mutate({
                     fileId: sheetId,
                     content: JSON.stringify(sheetData),
                 })
-            }, 5000) // Debounce for 5 seconds
+            }, 5000)
         },
         [sheetId, updateMutation, onSavingStatusChange]
     )
 
-    // Helper function to apply changes to sheet data
+    // Commit a new sheet state: updates the sheet, pushes a snapshot to history, and saves.
+    // This is the single entry point for ALL mutations (cell edits, add column, add row).
+    const commitChange = useCallback(
+        (newSheet: SheetData) => {
+            setSheet(newSheet)
+            setHistory((prev) => {
+                // Truncate any "future" history (from undos) then append the new state.
+                const next = [...prev.slice(0, historyIndex + 1), newSheet]
+                // Cap at 50 snapshots to avoid unbounded memory growth.
+                return next.length > 50 ? next.slice(-50) : next
+            })
+            setHistoryIndex((prev) => Math.min(prev + 1, 50))
+            debouncedSave(newSheet)
+        },
+        [historyIndex, debouncedSave]
+    )
+
+    // Apply a rename to a header cell (column header or row label)
+    const applyRename = useCallback(
+        (newText: string) => {
+            if (!renameState) return
+            const newSheet = {
+                ...sheet,
+                rows: sheet.rows.map((row) => ({
+                    ...row,
+                    cells: [...row.cells] as DefaultCellTypes[],
+                })),
+            }
+            const rowIndex = newSheet.rows.findIndex(
+                (r) => r.rowId === renameState.rowId
+            )
+            if (rowIndex === -1) {
+                setRenameState(null)
+                return
+            }
+            const cell = newSheet.rows[rowIndex]!.cells[renameState.colIndex]
+            if (!cell) {
+                setRenameState(null)
+                return
+            }
+            newSheet.rows[rowIndex]!.cells[renameState.colIndex] = {
+                ...cell,
+                text: newText,
+            } as DefaultCellTypes
+            newSheet.cells = newSheet.rows.map((r) => r.cells)
+            commitChange(newSheet)
+            setRenameState(null)
+        },
+        [renameState, sheet, commitChange]
+    )
+
+    // Undo: restore the previous snapshot
+    const undoChanges = useCallback(() => {
+        if (historyIndex > 0) {
+            const prevSheet = history[historyIndex - 1]!
+            setSheet(prevSheet)
+            setHistoryIndex(historyIndex - 1)
+            debouncedSave(prevSheet)
+        }
+    }, [historyIndex, history, debouncedSave])
+
+    // Redo: restore the next snapshot
+    const redoChanges = useCallback(() => {
+        if (historyIndex < history.length - 1) {
+            const nextSheet = history[historyIndex + 1]!
+            setSheet(nextSheet)
+            setHistoryIndex(historyIndex + 1)
+            debouncedSave(nextSheet)
+        }
+    }, [historyIndex, history, debouncedSave])
+
+    // Helper function to apply cell-level changes to sheet data
     const applyNewValue = useCallback(
         (
             changes: CellChange[],
             prevSheet: SheetData,
-            usePrevValue: boolean = false
         ): SheetData => {
             const newSheet = { ...prevSheet }
 
             changes.forEach((change) => {
-                // Skip changes to form data columns if this is a synced sheet
                 if (
                     syncMetadata?.formDataColumnCount &&
                     isFormDataColumn(
@@ -110,24 +204,15 @@ export function SheetEditor({
                     return
                 }
 
-                // Find row by rowId
                 const rowIndex = newSheet.rows.findIndex(
                     (row) => row.rowId === change.rowId
                 )
                 if (rowIndex === -1) return
 
-                // Create a copy of the row
                 const row = { ...newSheet.rows[rowIndex]! }
                 const newCells = [...(row.cells || [])] as DefaultCellTypes[]
+                newCells[change.columnId as number] = change.newCell as DefaultCellTypes
 
-                // Use either the new cell value or previous cell value
-                const cellToApply = usePrevValue
-                    ? change.previousCell
-                    : change.newCell
-                newCells[change.columnId as number] =
-                    cellToApply as DefaultCellTypes
-
-                // Update the row with new cells
                 row.cells = newCells
                 newSheet.rows[rowIndex] = row
                 newSheet.cells[rowIndex] = newCells
@@ -138,49 +223,6 @@ export function SheetEditor({
         [syncMetadata?.formDataColumnCount]
     )
 
-    // Function to apply changes and update history
-    const applyChangesToHistory = useCallback(
-        (changes: CellChange[], prevSheet: SheetData): SheetData => {
-            const updated = applyNewValue(changes, prevSheet)
-
-            // Add to history (remove any future history if we're not at the end)
-            const newHistory = [
-                ...cellChangesHistory.slice(0, historyIndex + 1),
-                changes,
-            ]
-            setCellChangesHistory(newHistory)
-            setHistoryIndex(newHistory.length - 1)
-
-            return updated
-        },
-        [cellChangesHistory, historyIndex, applyNewValue]
-    )
-
-    // Undo function
-    const undoChanges = useCallback(() => {
-        if (historyIndex >= 0 && cellChangesHistory[historyIndex]) {
-            const changes = cellChangesHistory[historyIndex]!
-            const newSheet = applyNewValue(changes, sheet, true) // Use previous values
-            setSheet(newSheet)
-            setHistoryIndex(historyIndex - 1)
-            debouncedSave(newSheet)
-        }
-    }, [historyIndex, cellChangesHistory, sheet, applyNewValue, debouncedSave])
-
-    // Redo function
-    const redoChanges = useCallback(() => {
-        if (
-            historyIndex + 1 < cellChangesHistory.length &&
-            cellChangesHistory[historyIndex + 1]
-        ) {
-            const changes = cellChangesHistory[historyIndex + 1]!
-            const newSheet = applyNewValue(changes, sheet, false) // Use new values
-            setSheet(newSheet)
-            setHistoryIndex(historyIndex + 1)
-            debouncedSave(newSheet)
-        }
-    }, [historyIndex, cellChangesHistory, sheet, applyNewValue, debouncedSave])
-
     // Check if Mac OS for keyboard shortcuts
     const isMacOs = useCallback(() => {
         return (
@@ -189,10 +231,16 @@ export function SheetEditor({
         )
     }, [])
 
-    // Keyboard event handler for undo/redo
+    // Keyboard event handler for undo/redo and Escape-to-deselect
     const handleKeyDown = useCallback(
         (e: KeyboardEvent) => {
             if (readOnly) return
+
+            // Escape: blur the focused cell so the user is visually "out" of the grid
+            if (e.key === 'Escape') {
+                ;(document.activeElement as HTMLElement)?.blur()
+                return
+            }
 
             const isCtrlOrCmd =
                 (!isMacOs() && e.ctrlKey) || (isMacOs() && e.metaKey)
@@ -201,17 +249,14 @@ export function SheetEditor({
                 switch (e.key.toLowerCase()) {
                     case 'z':
                         if (e.shiftKey) {
-                            // Ctrl+Shift+Z or Cmd+Shift+Z for redo
                             e.preventDefault()
                             redoChanges()
                         } else {
-                            // Ctrl+Z or Cmd+Z for undo
                             e.preventDefault()
                             undoChanges()
                         }
                         break
                     case 'y':
-                        // Ctrl+Y for redo (Windows style)
                         if (!isMacOs()) {
                             e.preventDefault()
                             redoChanges()
@@ -223,7 +268,6 @@ export function SheetEditor({
         [readOnly, isMacOs, undoChanges, redoChanges]
     )
 
-    // Add keyboard event listener
     useEffect(() => {
         document.addEventListener('keydown', handleKeyDown)
         return () => {
@@ -231,7 +275,21 @@ export function SheetEditor({
         }
     }, [handleKeyDown])
 
-    // Cleanup timeout on unmount
+    // Click-outside: blur the active ReactGrid cell when the user clicks
+    // anywhere outside the sheet container, so selection visually clears.
+    useEffect(() => {
+        const handleOutsideClick = (e: MouseEvent) => {
+            if (
+                containerRef.current &&
+                !containerRef.current.contains(e.target as Node)
+            ) {
+                ;(document.activeElement as HTMLElement)?.blur()
+            }
+        }
+        document.addEventListener('mousedown', handleOutsideClick)
+        return () => document.removeEventListener('mousedown', handleOutsideClick)
+    }, [])
+
     useEffect(() => {
         return () => {
             if (saveTimeoutRef.current) {
@@ -240,25 +298,27 @@ export function SheetEditor({
         }
     }, [])
 
-    // Function to add a new column to the sheet
+    // Add a new column
     const addColumn = () => {
-        const newSheet = { ...sheet }
+        // Deep-copy rows so we don't mutate existing history snapshots
+        const newSheet = {
+            ...sheet,
+            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+        }
         const currentColCount = newSheet.rows[0]?.cells.length || 0
 
-        // Convert column index to letter (A, B, C, ..., AA, AB, etc.)
         const getColumnLetter = (index: number): string => {
             let result = ''
             while (index > 0) {
-                index-- // Convert to 0-based
+                index--
                 result = String.fromCharCode(65 + (index % 26)) + result
                 index = Math.floor(index / 26)
             }
             return result
         }
 
-        const columnLetter = getColumnLetter(currentColCount) // currentColCount already accounts for row header
+        const columnLetter = getColumnLetter(currentColCount)
 
-        // Add header cell to header row
         if (newSheet.rows[0]) {
             newSheet.rows[0].cells.push({
                 type: 'header',
@@ -266,7 +326,6 @@ export function SheetEditor({
             } as DefaultCellTypes)
         }
 
-        // Add empty cells to all data rows
         for (let i = 1; i < newSheet.rows.length; i++) {
             newSheet.rows[i]?.cells.push({
                 type: 'text',
@@ -274,35 +333,32 @@ export function SheetEditor({
             } as DefaultCellTypes)
         }
 
-        // Update cells array
         newSheet.cells = newSheet.rows.map((row) => row.cells)
 
-        setSheet(newSheet)
-
-        // Trigger debounced save after 5 seconds
-        debouncedSave(newSheet)
+        // commitChange handles setSheet + history + debouncedSave
+        commitChange(newSheet)
     }
 
-    // Function to add a new row to the sheet
+    // Add a new row
     const addRow = () => {
-        const newSheet = { ...sheet }
+        // Deep-copy rows so we don't mutate existing history snapshots
+        const newSheet = {
+            ...sheet,
+            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+        }
         const newRowIndex = newSheet.rows.length
         const colCount = newSheet.rows[0]?.cells.length || 0
 
-        // Create new row
         const newRow = {
             rowId: `row-${newRowIndex}`,
             height: 35,
             cells: Array.from({ length: colCount }, (_, j) => {
                 if (j === 0) {
-                    // First cell is row header with row number
                     return {
                         type: 'header',
                         text: `${newRowIndex}`,
                     } as DefaultCellTypes
                 }
-
-                // Regular data cell
                 return {
                     type: 'text',
                     text: '',
@@ -311,20 +367,14 @@ export function SheetEditor({
         }
 
         newSheet.rows.push(newRow)
-
-        // Update cells array
         newSheet.cells = newSheet.rows.map((row) => row.cells)
 
-        setSheet(newSheet)
-
-        // Trigger debounced save after 5 seconds
-        debouncedSave(newSheet)
+        commitChange(newSheet)
     }
 
     const onCellsChanged = (changes: CellChange[]) => {
-        if (readOnly) return // Don't allow changes in read-only mode
+        if (readOnly) return
 
-        // Filter out changes to form data columns if this is a live sync sheet
         const allowedChanges = isLiveSyncSheet
             ? changes.filter(
                   (change) =>
@@ -354,15 +404,101 @@ export function SheetEditor({
             })
         }
 
-        // Use the history system to apply changes
-        const newSheet = applyChangesToHistory(allowedChanges, sheet)
-        setSheet(newSheet)
-
-        // Trigger debounced save after 5 seconds of no editing
-        debouncedSave(newSheet)
+        const newSheet = applyNewValue(allowedChanges, sheet)
+        commitChange(newSheet)
     }
 
-    // Derive column definitions from the first row's cells
+    // Right-click context menu: rename column, rename row, delete column
+    const handleContextMenu = useCallback(
+        (
+            selectedRowIds: Id[],
+            selectedColIds: Id[],
+            selectionMode: SelectionMode,
+            menuOptions: MenuOption[],
+        ): MenuOption[] => {
+            if (readOnly) return menuOptions
+
+            const newOptions = [...menuOptions]
+            const colIds = selectedColIds as number[]
+            const rowIds = selectedRowIds as string[]
+            const protectedRowIds = ['header', 'alphabetical-header', 'form-field-header']
+
+            // Rename Column: right-click on a header row cell (single col, col > 0)
+            const activeHeaderRowId = rowIds.find(
+                (r) => r === 'header' || r === 'alphabetical-header'
+            )
+            if (activeHeaderRowId && colIds.length === 1 && colIds[0]! > 0) {
+                const colIndex = colIds[0]!
+                const headerRow = sheet.rows.find((r) => r.rowId === activeHeaderRowId)
+                const currentText =
+                    (headerRow?.cells[colIndex] as { text?: string })?.text ?? ''
+                newOptions.push({
+                    id: 'renameColumn',
+                    label: 'Rename Column',
+                    handler: () => {
+                        setRenameState({
+                            rowId: activeHeaderRowId,
+                            colIndex,
+                            currentText,
+                            label: 'Column',
+                        })
+                    },
+                })
+            }
+
+            // Rename Row: right-click on col 0, single non-header row
+            if (
+                colIds.includes(0) &&
+                rowIds.length === 1 &&
+                !protectedRowIds.includes(rowIds[0]!)
+            ) {
+                const rowId = rowIds[0]!
+                const row = sheet.rows.find((r) => r.rowId === rowId)
+                const currentText = (row?.cells[0] as { text?: string })?.text ?? ''
+                newOptions.push({
+                    id: 'renameRow',
+                    label: 'Rename Row',
+                    handler: () => {
+                        setRenameState({
+                            rowId,
+                            colIndex: 0,
+                            currentText,
+                            label: 'Row',
+                        })
+                    },
+                })
+            }
+
+            // Delete Column: any user-added, non-protected column (col > 0)
+            const deletableCols = colIds.filter(
+                (colId) =>
+                    colId > 0 &&
+                    (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
+            )
+            if (deletableCols.length > 0) {
+                newOptions.push({
+                    id: 'deleteColumn',
+                    label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
+                    handler: () => {
+                        // Sort descending so splicing doesn't shift earlier indices
+                        const toDelete = [...deletableCols].sort((a, b) => b - a)
+                        const newSheet = { ...sheet }
+                        newSheet.rows = newSheet.rows.map((row) => {
+                            const newCells = [...row.cells] as DefaultCellTypes[]
+                            toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
+                            return { ...row, cells: newCells }
+                        })
+                        newSheet.cells = newSheet.rows.map((row) => row.cells)
+                        commitChange(newSheet)
+                    },
+                })
+            }
+
+            return newOptions
+        },
+        [readOnly, isLiveSyncSheet, formDataColumnCount, sheet, commitChange]
+    )
+
     const columns: Column[] =
         sheet.rows[0]?.cells.map((_, index) => {
             const isFormDataCol =
@@ -371,7 +507,6 @@ export function SheetEditor({
                 columnId: index,
                 width: index === 0 ? 60 : 120,
                 resizable: true,
-                // Add visual distinction for form data columns
                 ...(isFormDataCol && {
                     className: 'rg-column-form-data',
                 }),
@@ -379,7 +514,7 @@ export function SheetEditor({
         }) || []
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full" ref={containerRef}>
             {isLiveSyncSheet && (
                 <style jsx>{`
                     .rg-column-form-data .rg-cell {
@@ -405,7 +540,7 @@ export function SheetEditor({
                             variant="outline"
                             size="sm"
                             onClick={undoChanges}
-                            disabled={historyIndex < 0}
+                            disabled={historyIndex <= 0}
                             className="flex items-center gap-2"
                             title={`Undo (${isMacOs() ? 'Cmd' : 'Ctrl'}+Z)`}
                         >
@@ -416,9 +551,7 @@ export function SheetEditor({
                             variant="outline"
                             size="sm"
                             onClick={redoChanges}
-                            disabled={
-                                historyIndex + 1 >= cellChangesHistory.length
-                            }
+                            disabled={historyIndex >= history.length - 1}
                             className="flex items-center gap-2"
                             title={`Redo (${isMacOs() ? 'Cmd+Shift' : 'Ctrl+Shift'}+Z)`}
                         >
@@ -436,11 +569,21 @@ export function SheetEditor({
                             <Plus className="h-4 w-4" />
                             Add Column
                         </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={addRow}
+                            disabled={updateMutation.isPending}
+                            className="flex items-center gap-2"
+                        >
+                            <Plus className="h-4 w-4" />
+                            Add Row
+                        </Button>
                     </div>
                 </div>
             )}
 
-            {/* Live Sync Badge - only show if present */}
+            {/* Live Sync Badge */}
             {isLiveSyncSheet && (
                 <div className="flex justify-center p-2 border-b bg-blue-50 dark:bg-blue-950/50">
                     <Badge
@@ -501,11 +644,54 @@ export function SheetEditor({
                         columns={columns}
                         minRowHeight={35}
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
+                        onContextMenu={readOnly ? undefined : handleContextMenu}
                         enableRowSelection={!readOnly}
                         enableColumnSelection={!readOnly}
                     />
                 </div>
             </div>
+
+            {/* Rename Column / Row dialog */}
+            {renameState && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+                    onMouseDown={(e) => {
+                        if (e.target === e.currentTarget) setRenameState(null)
+                    }}
+                >
+                    <div className="bg-background border rounded-lg shadow-lg p-4 w-72">
+                        <h3 className="text-sm font-medium mb-3">
+                            Rename {renameState.label}
+                        </h3>
+                        <input
+                            ref={renameInputRef}
+                            type="text"
+                            value={renameInputValue}
+                            onChange={(e) => setRenameInputValue(e.target.value)}
+                            className="w-full border rounded px-3 py-1.5 text-sm mb-3 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                                if (e.key === 'Enter') applyRename(renameInputValue)
+                                if (e.key === 'Escape') setRenameState(null)
+                            }}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setRenameState(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={() => applyRename(renameInputValue)}
+                            >
+                                Rename
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

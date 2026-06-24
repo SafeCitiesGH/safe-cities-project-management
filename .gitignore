@@ -46,3 +46,4 @@ yarn-error.log*
 .idea
 # clerk configuration (can include secrets)
 /.clerk/
+.env*

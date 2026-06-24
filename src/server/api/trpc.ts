@@ -168,3 +168,26 @@ export const protectedProcedure = t.procedure
             },
         })
     })
+
+/**
+ * Admin-only procedure
+ *
+ * Builds on protectedProcedure and additionally verifies that the authenticated
+ * user has the 'admin' role in our database. Throws FORBIDDEN otherwise.
+ * Use this for operations only admins may perform (e.g. assigning users to programmes).
+ */
+export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+    const dbUser = await ctx.db.query.users.findFirst({
+        where: eq(users.id, ctx.auth.userId),
+        columns: { role: true },
+    })
+
+    if (dbUser?.role !== 'admin') {
+        throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'This action requires administrator privileges',
+        })
+    }
+
+    return next({ ctx: { auth: ctx.auth } })
+})
