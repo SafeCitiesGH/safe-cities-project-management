@@ -22,13 +22,13 @@ const navigationItems = [
         icon: Bell,
         adminOnly: false,
     },
-    { href: '/chats', label: 'Chats', icon: MessageSquare, adminOnly: false },
     {
         href: '/google-calendar',
-        label: 'Calendar',
+        label: 'Google Calendar',
         icon: CalendarDays,
         adminOnly: false,
     },
+    { href: '/chats', label: 'Chats', icon: MessageSquare, adminOnly: false },
     { href: '/users', label: 'Users', icon: Users, adminOnly: true },
 ]
 

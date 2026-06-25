@@ -1,18 +1,52 @@
-import { google } from "googleapis";
-import { NextResponse } from "next/server";
+import { randomUUID } from 'crypto'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function GET() {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-  );
+import { getAuthUser } from '~/server/auth'
+import {
+    createGoogleOAuth2Client,
+    GOOGLE_CALENDAR_SCOPES,
+} from '~/server/google-calendar'
 
-  const url = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    prompt: "consent",
-    scope: ["https://www.googleapis.com/auth/calendar"],
-  });
+function getSafeRedirectPath(value: string | null) {
+    if (!value || !value.startsWith('/')) {
+        return '/google-calendar'
+    }
 
-  return NextResponse.redirect(url);
+    return value
+}
+
+export async function GET(req: NextRequest) {
+    const auth = getAuthUser(req)
+
+    if (!auth?.userId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const redirectPath = getSafeRedirectPath(
+        req.nextUrl.searchParams.get('redirect')
+    )
+    const state = randomUUID()
+    const oauth2Client = createGoogleOAuth2Client()
+
+    const url = oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        prompt: 'consent',
+        include_granted_scopes: true,
+        scope: [...GOOGLE_CALENDAR_SCOPES],
+        state,
+    })
+
+    const response = NextResponse.redirect(url)
+    const cookieConfig = {
+        httpOnly: true,
+        maxAge: 60 * 10,
+        path: '/',
+        sameSite: 'lax' as const,
+        secure: process.env.NODE_ENV === 'production',
+    }
+
+    response.cookies.set('google_oauth_state', state, cookieConfig)
+    response.cookies.set('google_oauth_redirect', redirectPath, cookieConfig)
+
+    return response
 }

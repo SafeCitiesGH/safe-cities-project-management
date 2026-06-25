@@ -1,55 +1,85 @@
-import { google } from "googleapis";
-import { NextRequest, NextResponse } from "next/server";
+import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server'
+
+import { getAuthUser } from '~/server/auth'
+import {
+    getGoogleCalendarClient,
+    GoogleCalendarConnectionError,
+    mapGoogleCalendarEvent,
+} from '~/server/google-calendar'
+
+const createEventSchema = z.object({
+    title: z.string().trim().min(1),
+    description: z.string().optional().default(''),
+    location: z.string().optional().default(''),
+    start: z.string().trim().min(1),
+    end: z.string().trim().min(1),
+})
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
+    const auth = getAuthUser(req)
 
-    if (!body.title || !body.start || !body.end) {
-      return NextResponse.json(
-        { error: "Missing title, start, or end" },
-        { status: 400 }
-      );
+    if (!auth?.userId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
+    try {
+        const body = createEventSchema.parse(await req.json())
+        const startDate = new Date(body.start)
+        const endDate = new Date(body.end)
 
-    oauth2Client.setCredentials({
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-    });
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+            return NextResponse.json(
+                { error: 'Invalid event dates' },
+                { status: 400 }
+            )
+        }
 
-    const calendar = google.calendar({
-      version: "v3",
-      auth: oauth2Client,
-    });
+        if (endDate <= startDate) {
+            return NextResponse.json(
+                { error: 'End time must be after start time' },
+                { status: 400 }
+            )
+        }
 
-    const event = await calendar.events.insert({
-      calendarId: process.env.GOOGLE_CALENDAR_ID || "primary",
-      requestBody: {
-        summary: body.title,
-        description: body.description || "",
-        location: body.location || "",
-        start: {
-          dateTime: new Date(body.start).toISOString(),
-          timeZone: "Africa/Johannesburg",
-        },
-        end: {
-          dateTime: new Date(body.end).toISOString(),
-          timeZone: "Africa/Johannesburg",
-        },
-      },
-    });
+        const calendar = await getGoogleCalendarClient(auth.userId)
+        const event = await calendar.events.insert({
+            calendarId: 'primary',
+            requestBody: {
+                summary: body.title,
+                description: body.description,
+                location: body.location,
+                start: {
+                    dateTime: startDate.toISOString(),
+                    timeZone: 'Africa/Johannesburg',
+                },
+                end: {
+                    dateTime: endDate.toISOString(),
+                    timeZone: 'Africa/Johannesburg',
+                },
+            },
+        })
 
-    return NextResponse.json(event.data);
-  } catch (error) {
-    console.error("Google Calendar create error:", error);
-    return NextResponse.json(
-      { error: "Failed to create event", details: String(error) },
-      { status: 500 }
-    );
-  }
+        return NextResponse.json(mapGoogleCalendarEvent(event.data))
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            return NextResponse.json(
+                { error: 'Invalid request payload', issues: error.flatten() },
+                { status: 400 }
+            )
+        }
+
+        if (error instanceof GoogleCalendarConnectionError) {
+            return NextResponse.json(
+                { error: error.message, code: error.code },
+                { status: error.status }
+            )
+        }
+
+        console.error('Google Calendar create error:', error)
+        return NextResponse.json(
+            { error: 'Failed to create event' },
+            { status: 500 }
+        )
+    }
 }

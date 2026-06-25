@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState, useEffect, type FormEvent } from 'react'
+import { Suspense, useMemo, useState, useEffect, type FormEvent } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { CalendarDays, Plus } from 'lucide-react'
 import { format } from 'date-fns'
 import { Button } from '~/components/ui/button'
@@ -21,6 +22,7 @@ import {
 import { SidebarTrigger, useSidebar } from '~/components/ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
 import { toast } from '~/hooks/use-toast'
+import { GoogleConnectButton } from '~/components/google-calendar/connect-button'
 
 const calendarStyles = `
   .calendar-large {
@@ -133,6 +135,12 @@ type GoogleCalendarEvent = {
   htmlLink?: string
 }
 
+type GoogleCalendarStatus = {
+  connected: boolean
+  googleEmail: string | null
+  connectedAt: string | null
+}
+
 function pad(value: number) {
   return String(value).padStart(2, '0')
 }
@@ -157,12 +165,19 @@ function getDateKey(date: Date) {
   return format(date, 'yyyy-MM-dd')
 }
 
-export default function GoogleCalendarPage() {
+function GoogleCalendarPageContent() {
+  const searchParams = useSearchParams()
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [lastMessage, setLastMessage] = useState<string | null>(null)
   const [events, setEvents] = useState<GoogleCalendarEvent[]>([])
+  const [googleStatus, setGoogleStatus] = useState<GoogleCalendarStatus>({
+    connected: false,
+    googleEmail: null,
+    connectedAt: null,
+  })
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -195,15 +210,79 @@ export default function GoogleCalendarPage() {
       .sort((a, b) => a.time - b.time)[0]?.event
   }, [events])
 
+  const googleState = searchParams.get('google')
+  const googleDetail = searchParams.get('detail')
+
+  useEffect(() => {
+    if (googleState === 'connected') {
+      toast({ title: 'Google Calendar connected' })
+    } else if (googleState === 'reconnected') {
+      toast({ title: 'Google Calendar reconnected' })
+    } else if (googleState === 'error') {
+      toast({
+        title: 'Google connection failed',
+        description: googleDetail
+          ? decodeURIComponent(googleDetail)
+          : 'The Google OAuth flow did not complete successfully.',
+        variant: 'destructive',
+      })
+    }
+  }, [googleDetail, googleState])
+
   useEffect(() => {
     let mounted = true
     async function load() {
       try {
-        const res = await fetch('/api/google/events/list')
-        if (!res.ok) {
-          console.warn('Failed to load events')
+        setIsLoadingEvents(true)
+
+        const statusRes = await fetch('/api/google/status', {
+          cache: 'no-store',
+        })
+
+        if (!statusRes.ok) {
+          if (mounted) {
+            setGoogleStatus({
+              connected: false,
+              googleEmail: null,
+              connectedAt: null,
+            })
+          }
           return
         }
+
+        const statusData = (await statusRes.json()) as GoogleCalendarStatus
+
+        if (mounted) {
+          setGoogleStatus(statusData)
+        }
+
+        if (!statusData.connected) {
+          if (mounted) {
+            setEvents([])
+          }
+          return
+        }
+
+        const res = await fetch('/api/google/events/list', {
+          cache: 'no-store',
+        })
+
+        if (res.status === 409) {
+          if (mounted) {
+            setGoogleStatus({
+              connected: false,
+              googleEmail: null,
+              connectedAt: null,
+            })
+            setEvents([])
+          }
+          return
+        }
+
+        if (!res.ok) {
+          throw new Error('Failed to load events')
+        }
+
         const data = (await res.json()) as Array<{
           id?: string
           title?: string
@@ -229,6 +308,15 @@ export default function GoogleCalendarPage() {
         if (mounted) setEvents(parsed)
       } catch (err) {
         console.error('Error loading events:', err)
+        toast({
+          title: 'Failed to load calendar events',
+          description: err instanceof Error ? err.message : 'Unknown error',
+          variant: 'destructive',
+        })
+      } finally {
+        if (mounted) {
+          setIsLoadingEvents(false)
+        }
       }
     }
     void load()
@@ -246,6 +334,15 @@ export default function GoogleCalendarPage() {
   }
 
   const openAddEventDialog = (date: Date) => {
+    if (!googleStatus.connected) {
+      toast({
+        title: 'Connect Google Calendar first',
+        description: 'This account has not connected a Google Calendar yet.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const range = getEventRangeForDate(date)
     setSelectedDate(date)
     setTitle('')
@@ -340,7 +437,6 @@ export default function GoogleCalendarPage() {
       })
       let data: { error?: string; message?: string } | null = null
       try {
-        // parse JSON if any
         data = (await res.json()) as { error?: string; message?: string }
       } catch {
         data = null
@@ -354,18 +450,18 @@ export default function GoogleCalendarPage() {
   }
 
   const CustomDayContent = ({ date }: DayContentProps) => {
-  const count = eventsByDate.get(getDateKey(date))?.length ?? 0
+    const count = eventsByDate.get(getDateKey(date))?.length ?? 0
 
-  return (
-    <div className="relative flex h-full w-full flex-col items-center pt-4">
-      <span>{date.getDate()}</span>
+    return (
+      <div className="relative flex h-full w-full flex-col items-center pt-4">
+        <span>{date.getDate()}</span>
 
-      {count > 0 && (
-        <span className="mt-2 h-2 w-2 rounded-full bg-primary" />
-      )}
-    </div>
-  )
- }
+        {count > 0 && (
+          <span className="mt-2 h-2 w-2 rounded-full bg-primary" />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -381,14 +477,22 @@ export default function GoogleCalendarPage() {
           </div>
           <div className="flex items-center gap-3">
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" onClick={() => openAddEventDialog(selectedDate)} className="gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => openAddEventDialog(selectedDate)}
+                className="gap-2"
+                disabled={!googleStatus.connected}
+              >
                 <Plus size={16} />
                 Add event
               </Button>
-              <Button size="sm" variant="outline" onClick={() => window.open('/api/google/auth', '_blank')} className="gap-2">
-                <CalendarDays size={16} />
-                Connect
-              </Button>
+              <GoogleConnectButton
+                size="sm"
+                variant="outline"
+                className="gap-2"
+                isConnected={googleStatus.connected}
+              />
             </div>
           </div>
         </div>
@@ -396,21 +500,21 @@ export default function GoogleCalendarPage() {
 
       <div className="flex-1 overflow-hidden p-4">
         <div className="grid gap-6 h-full grid-cols-1 lg:grid-cols-3">
-        <Card className="lg:col-span-2 flex min-h-[720px] flex-col overflow-hidden rounded-2xl">
-        <CardHeader className="border-b px-6 py-6">
-            <CardTitle className="text-xl">Calendar</CardTitle>
-        </CardHeader>
+          <Card className="lg:col-span-2 flex min-h-[720px] flex-col overflow-hidden rounded-2xl">
+            <CardHeader className="border-b px-6 py-6">
+              <CardTitle className="text-xl">Calendar</CardTitle>
+            </CardHeader>
 
-        <CardContent className="flex-1 overflow-hidden p-6">
-            <div className="calendar-large h-full w-full">
-            <Calendar
-                mode="single"
-                selected={selectedDate}
-                onSelect={handleDateSelect}
-                showOutsideDays
-                components={{ DayContent: CustomDayContent }}
-                className="w-full max-h-[200px] p-0"
-                classNames={{
+            <CardContent className="flex-1 overflow-hidden p-6">
+              <div className="calendar-large h-full w-full">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={handleDateSelect}
+                  showOutsideDays
+                  components={{ DayContent: CustomDayContent }}
+                  className="w-full max-h-[200px] p-0"
+                  classNames={{
                     months: "h-full w-full",
                     month: "h-full w-full",
                     caption: "relative mb-2 flex items-center justify-center",
@@ -419,80 +523,94 @@ export default function GoogleCalendarPage() {
                     nav_button: "h-8 w-8 rounded-lg bg-black/20 hover:bg-muted",
                     nav_button_previous: "absolute left-0",
                     nav_button_next: "absolute right-0",
-
                     table: "w-full table-fixed border-collapse",
                     head_row: "grid grid-cols-7",
                     head_cell:
-                    "flex h-10 items-center justify-center text-sm font-semibold uppercase text-muted-foreground",
-
+                      "flex h-10 items-center justify-center text-sm font-semibold uppercase text-muted-foreground",
                     row: "grid grid-cols-7",
                     cell:
-                    "relative h-[80px] border border-border p-0 text-center",
-
+                      "relative h-[80px] border border-border p-0 text-center",
                     day:
-                    "h-full w-full rounded-none p-0 text-base font-semibold hover:bg-muted",
+                      "h-full w-full rounded-none p-0 text-base font-semibold hover:bg-muted",
                     day_selected: "bg-primary/20 text-foreground hover:bg-primary/25",
                     day_today: "text-primary",
                     day_outside: "text-muted-foreground/40",
-                }}
+                  }}
                 />
-            </div>
-        </CardContent>
-        </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card className="flex flex-col overflow-hidden">
-          <CardHeader className="pb-3 border-b">
-            <div className="space-y-1">
-              <CardTitle className="text-lg">Events</CardTitle>
-              <p className="text-sm text-muted-foreground">{format(selectedDate, 'EEE, MMM d, yyyy')}</p>
-            </div>
-          </CardHeader>
-          <CardContent className="flex-1 overflow-auto p-4">
-            {selectedEvents.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-center">
-                <p className="text-sm text-muted-foreground">No events on this date.</p>
+          <Card className="flex flex-col overflow-hidden">
+            <CardHeader className="pb-3 border-b">
+              <div className="space-y-1">
+                <CardTitle className="text-lg">Events</CardTitle>
+                <p className="text-sm text-muted-foreground">{format(selectedDate, 'EEE, MMM d, yyyy')}</p>
+                <p className="text-sm text-muted-foreground">
+                  {googleStatus.connected
+                    ? `Connected as ${googleStatus.googleEmail ?? 'Google account'}`
+                    : 'No Google Calendar connected for this Clerk user yet.'}
+                </p>
               </div>
-            ) : (
-              <div className="space-y-3">
-                {selectedEvents.map((event) => (
-                  <div key={event.id} className="rounded-md border border-input p-3 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold">{event.title}</p>
-                        <p className="text-sm text-muted-foreground">{formatTimeRange(event)}</p>
-                      </div>
-                      <div className="text-right flex items-center gap-3">
-                        {event.htmlLink ? (
-                          <a href={event.htmlLink} target="_blank" rel="noreferrer" className="text-primary underline text-sm">
-                            View
-                          </a>
-                        ) : null}
-                        <Button variant="ghost" onClick={() => handleDeleteEvent(event.id)} className="text-sm text-destructive">
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                    {event.location ? <p className="text-sm text-muted-foreground mt-2">Location: {event.location}</p> : null}
-                    {event.description ? <p className="text-sm text-muted-foreground mt-2">{event.description}</p> : null}
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            {nextEvent && (
-              <div className="mt-6 pt-6 border-t">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">NEXT EVENT</p>
-                <div className="p-3 rounded-lg bg-muted">
-                  <p className="font-semibold text-sm">{nextEvent.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{format(new Date(nextEvent.start), 'MMM d, yyyy')}</p>
-                  <p className="text-xs text-muted-foreground">{formatTimeRange(nextEvent)}</p>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-auto p-4">
+              {!googleStatus.connected ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <CalendarDays className="text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Connect Google Calendar to load and manage events from this user&apos;s primary calendar.
+                  </p>
+                  <GoogleConnectButton isConnected={false} />
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              ) : isLoadingEvents ? (
+                <div className="flex items-center justify-center h-full text-center">
+                  <p className="text-sm text-muted-foreground">Loading events...</p>
+                </div>
+              ) : selectedEvents.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-center">
+                  <p className="text-sm text-muted-foreground">No events on this date.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedEvents.map((event) => (
+                    <div key={event.id} className="rounded-md border border-input p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{event.title}</p>
+                          <p className="text-sm text-muted-foreground">{formatTimeRange(event)}</p>
+                        </div>
+                        <div className="text-right flex items-center gap-3">
+                          {event.htmlLink ? (
+                            <a href={event.htmlLink} target="_blank" rel="noreferrer" className="text-primary underline text-sm">
+                              View
+                            </a>
+                          ) : null}
+                          <Button variant="ghost" onClick={() => handleDeleteEvent(event.id)} className="text-sm text-destructive">
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                      {event.location ? <p className="text-sm text-muted-foreground mt-2">Location: {event.location}</p> : null}
+                      {event.description ? <p className="text-sm text-muted-foreground mt-2">{event.description}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {googleStatus.connected && nextEvent && (
+                <div className="mt-6 pt-6 border-t">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">NEXT EVENT</p>
+                  <div className="p-3 rounded-lg bg-muted">
+                    <p className="font-semibold text-sm">{nextEvent.title}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{format(new Date(nextEvent.start), 'MMM d, yyyy')}</p>
+                    <p className="text-xs text-muted-foreground">{formatTimeRange(nextEvent)}</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
-    </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
@@ -532,5 +650,13 @@ export default function GoogleCalendarPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+export default function GoogleCalendarPage() {
+  return (
+    <Suspense fallback={<div className="h-screen bg-background" />}>
+      <GoogleCalendarPageContent />
+    </Suspense>
   )
 }

@@ -1,27 +1,62 @@
-import { google } from "googleapis";
-import { NextRequest, NextResponse } from "next/server";
+import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server'
+
+import { getAuthUser } from '~/server/auth'
+import {
+    getGoogleCalendarClient,
+    GoogleCalendarConnectionError,
+} from '~/server/google-calendar'
+
+const deleteEventSchema = z.object({
+    id: z.string().trim().min(1).optional(),
+    eventId: z.string().trim().min(1).optional(),
+})
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const id = body.id || body.eventId || null;
-    if (!id) return NextResponse.json({ error: "Missing event id" }, { status: 400 });
+    const auth = getAuthUser(req)
 
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
+    if (!auth?.userId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    try {
+        const body = deleteEventSchema.parse(await req.json())
+        const eventId = body.id ?? body.eventId
 
-    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+        if (!eventId) {
+            return NextResponse.json(
+                { error: 'Missing event id' },
+                { status: 400 }
+            )
+        }
 
-    await calendar.events.delete({ calendarId: process.env.GOOGLE_CALENDAR_ID || "primary", eventId: id });
+        const calendar = await getGoogleCalendarClient(auth.userId)
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Google Calendar delete error:", error);
-    return NextResponse.json({ error: "Failed to delete event", details: String(error) }, { status: 500 });
-  }
+        await calendar.events.delete({
+            calendarId: 'primary',
+            eventId,
+        })
+
+        return NextResponse.json({ success: true })
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            return NextResponse.json(
+                { error: 'Invalid request payload', issues: error.flatten() },
+                { status: 400 }
+            )
+        }
+
+        if (error instanceof GoogleCalendarConnectionError) {
+            return NextResponse.json(
+                { error: error.message, code: error.code },
+                { status: error.status }
+            )
+        }
+
+        console.error('Google Calendar delete error:', error)
+        return NextResponse.json(
+            { error: 'Failed to delete event' },
+            { status: 500 }
+        )
+    }
 }
