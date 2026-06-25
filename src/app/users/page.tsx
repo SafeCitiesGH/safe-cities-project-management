@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { api } from '~/trpc/react'
+import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
 import { Button } from '~/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
@@ -225,6 +226,17 @@ export default function UsersPage() {
                                 <TableRow key={user.id}>
                                     <TableCell>
                                         <div className="flex items-center gap-3">
+                                            <Avatar className="h-10 w-10">
+                                                <AvatarImage
+                                                    src={user.imageUrl ?? undefined}
+                                                    alt={user.name || user.email}
+                                                />
+                                                <AvatarFallback className="text-sm">
+                                                    {(user.name || user.email || 'U')
+                                                        .charAt(0)
+                                                        .toUpperCase()}
+                                                </AvatarFallback>
+                                            </Avatar>
                                             <div>
                                                 <p className="font-medium">
                                                     {user.name}
