@@ -158,6 +158,8 @@ export default function SheetPage() {
                     sheetId={sheetId}
                     sheetName={sheet.name}
                     readOnly={isReadOnly}
+                    realtimeDocumentId={sheetId}
+                    permission={userPermission ?? 'view'}
                     syncMetadata={
                         syncMetadata
                             ? {

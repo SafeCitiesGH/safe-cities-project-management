@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
     ReactGrid,
     type CellChange,
+    type CellLocation,
     type Column,
     type DefaultCellTypes,
     type Id,
@@ -19,6 +20,8 @@ import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
 import { Card, CardContent } from '~/components/ui/card'
 import { Plus, Activity, Shield, Info, Undo, Redo } from 'lucide-react'
+import { useSupabaseYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
+import * as Y from 'yjs'
 
 interface SheetEditorProps {
     initialData: SheetData
@@ -31,6 +34,8 @@ interface SheetEditorProps {
         formDataColumnCount: number
         lastSyncAt: string
     }
+    realtimeDocumentId?: string | number
+    permission?: 'view' | 'comment' | 'edit'
     onSavingStatusChange?: (status: 'idle' | 'saving' | 'saved') => void
     onShowVersionHistory?: () => void
 }
@@ -41,10 +46,32 @@ export function SheetEditor({
     sheetName,
     readOnly = false,
     syncMetadata,
+    realtimeDocumentId,
+    permission = 'view',
     onSavingStatusChange,
     onShowVersionHistory,
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
+    const collaborationEnabled = Boolean(realtimeDocumentId)
+    const collaboration = useSupabaseYjsCollaboration({
+        documentId: realtimeDocumentId,
+        enabled: collaborationEnabled,
+        permission,
+    })
+    const {
+        lastError: collaborationLastError,
+        markInitialContentLoaded,
+        presenceUsers,
+        shouldLoadInitialContent,
+        status: collaborationStatus,
+        updatePresenceMetadata,
+        ydoc,
+    } = collaboration
+    const sheetMap = React.useMemo(() => ydoc.getMap<string>('sheet'), [ydoc])
+    const applyingRemoteChangeRef = useRef(false)
+    const sheetLocalOriginRef = useRef(Symbol('sheet-local-update'))
+    const sheetRef = useRef<SheetData>(initialData)
+    const focusedCellRef = useRef<CellLocation | null>(null)
 
     // Rename dialog state
     const [renameState, setRenameState] = useState<{
@@ -72,6 +99,10 @@ export function SheetEditor({
     // This covers cell edits AND structural changes (add column, add row).
     const [history, setHistory] = useState<SheetData[]>([initialData])
     const [historyIndex, setHistoryIndex] = useState(0)
+
+    useEffect(() => {
+        sheetRef.current = sheet
+    }, [sheet])
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -114,6 +145,18 @@ export function SheetEditor({
         [sheetId, updateMutation, onSavingStatusChange]
     )
 
+    const publishSheetToRealtime = useCallback(
+        (sheetData: SheetData) => {
+            if (!collaborationEnabled) return
+
+            ydoc.transact(() => {
+                sheetMap.set('data', JSON.stringify(sheetData))
+                sheetMap.set('updatedAt', String(Date.now()))
+            }, sheetLocalOriginRef.current)
+        },
+        [collaborationEnabled, sheetMap, ydoc]
+    )
+
     // Commit a new sheet state: updates the sheet, pushes a snapshot to history, and saves.
     // This is the single entry point for ALL mutations (cell edits, add column, add row).
     const commitChange = useCallback(
@@ -126,10 +169,71 @@ export function SheetEditor({
                 return next.length > 50 ? next.slice(-50) : next
             })
             setHistoryIndex((prev) => Math.min(prev + 1, 50))
+            publishSheetToRealtime(newSheet)
             debouncedSave(newSheet)
         },
-        [historyIndex, debouncedSave]
+        [historyIndex, publishSheetToRealtime, debouncedSave]
     )
+
+    useEffect(() => {
+        if (!collaborationEnabled) return
+
+        const handleRemoteSheetChange = (event: Y.YMapEvent<string>) => {
+            if (event.transaction.origin === sheetLocalOriginRef.current) return
+            if (!event.keysChanged.has('data')) return
+
+            const data = sheetMap.get('data')
+            if (!data) return
+
+            try {
+                const nextSheet = JSON.parse(data) as SheetData
+                if (
+                    !nextSheet?.rows ||
+                    !Array.isArray(nextSheet.rows) ||
+                    !nextSheet?.cells ||
+                    !Array.isArray(nextSheet.cells)
+                ) {
+                    return
+                }
+
+                applyingRemoteChangeRef.current = true
+                setSheet(nextSheet)
+                setHistory((prev) => {
+                    const next = [...prev, nextSheet]
+                    return next.length > 50 ? next.slice(-50) : next
+                })
+                setHistoryIndex((prev) => Math.min(prev + 1, 50))
+                window.setTimeout(() => {
+                    applyingRemoteChangeRef.current = false
+                }, 0)
+            } catch (error) {
+                console.warn('Failed to apply remote sheet update', error)
+            }
+        }
+
+        sheetMap.observe(handleRemoteSheetChange)
+
+        return () => {
+            sheetMap.unobserve(handleRemoteSheetChange)
+        }
+    }, [collaborationEnabled, sheetMap])
+
+    useEffect(() => {
+        if (!collaborationEnabled || !shouldLoadInitialContent) return
+
+        if (!sheetMap.get('data')) {
+            publishSheetToRealtime(sheet)
+        }
+
+        markInitialContentLoaded()
+    }, [
+        collaborationEnabled,
+        markInitialContentLoaded,
+        publishSheetToRealtime,
+        sheet,
+        sheetMap,
+        shouldLoadInitialContent,
+    ])
 
     // Apply a rename to a header cell (column header or row label)
     const applyRename = useCallback(
@@ -408,6 +512,119 @@ export function SheetEditor({
         commitChange(newSheet)
     }
 
+    const getCellLabel = useCallback((location: CellLocation) => {
+        const columnIndex =
+            typeof location.columnId === 'number'
+                ? location.columnId
+                : Number(location.columnId)
+        const rowId = String(location.rowId)
+        const rowNumber = rowId.startsWith('row-')
+            ? Number(rowId.replace('row-', '')) + 1
+            : rowId
+
+        const getColumnLetter = (index: number): string => {
+            let result = ''
+            let value = Number.isFinite(index) ? index : 0
+
+            do {
+                result = String.fromCharCode(65 + (value % 26)) + result
+                value = Math.floor(value / 26) - 1
+            } while (value >= 0)
+
+            return result
+        }
+
+        return `${getColumnLetter(columnIndex)}${rowNumber}`
+    }, [])
+
+    const handleFocusLocationChanged = useCallback(
+        (location: CellLocation) => {
+            focusedCellRef.current = location
+            updatePresenceMetadata({
+                cursor: {
+                    rowId: String(location.rowId),
+                    columnId: location.columnId,
+                    label: getCellLabel(location),
+                },
+            })
+        },
+        [getCellLabel, updatePresenceMetadata]
+    )
+
+    useEffect(() => {
+        if (!collaborationEnabled) return
+
+        const container = containerRef.current
+        if (!container) return
+
+        const handleDraftInput = (event: Event) => {
+            if (readOnly) return
+
+            const target = event.target
+            if (!(target instanceof HTMLInputElement)) return
+            if (!target.closest('.rg-celleditor')) return
+
+            const focusedCell = focusedCellRef.current
+            if (!focusedCell) return
+
+            const rowId = String(focusedCell.rowId)
+            const columnId = Number(focusedCell.columnId)
+            if (!Number.isFinite(columnId)) return
+
+            if (
+                isLiveSyncSheet &&
+                isFormDataColumn(columnId, formDataColumnCount)
+            ) {
+                return
+            }
+
+            const currentSheet = sheetRef.current
+            const rowIndex = currentSheet.rows.findIndex(
+                (row) => String(row.rowId) === rowId
+            )
+            if (rowIndex === -1) return
+
+            const row = currentSheet.rows[rowIndex]
+            const cell = row?.cells[columnId]
+            if (!row || !cell || cell.type !== 'text') return
+
+            const nextRows = currentSheet.rows.map((sheetRow, index) => {
+                if (index !== rowIndex) return sheetRow
+
+                const nextCells = [
+                    ...sheetRow.cells,
+                ] as DefaultCellTypes[]
+                nextCells[columnId] = {
+                    ...cell,
+                    text: target.value,
+                } as DefaultCellTypes
+
+                return {
+                    ...sheetRow,
+                    cells: nextCells,
+                }
+            })
+
+            publishSheetToRealtime({
+                ...currentSheet,
+                rows: nextRows,
+                cells: nextRows.map((sheetRow) => sheetRow.cells),
+            })
+        }
+
+        container.addEventListener('input', handleDraftInput)
+
+        return () => {
+            container.removeEventListener('input', handleDraftInput)
+        }
+    }, [
+        collaborationEnabled,
+        formDataColumnCount,
+        isLiveSyncSheet,
+        publishSheetToRealtime,
+        readOnly,
+    ])
+
     // Right-click context menu: rename column, rename row, delete column
     const handleContextMenu = useCallback(
         (
@@ -515,6 +732,47 @@ export function SheetEditor({
 
     return (
         <div className="flex flex-col h-full" ref={containerRef}>
+            {collaborationEnabled && (
+                <div className="flex w-full items-center justify-center border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+                    <div className="flex w-full items-center justify-between gap-3">
+                        <span>
+                            Live editing:{' '}
+                            {collaborationStatus === 'connected'
+                                ? 'connected'
+                                : collaborationStatus === 'connecting'
+                                  ? 'connecting'
+                                  : collaborationStatus === 'error'
+                                    ? `unavailable${collaborationLastError ? ` (${collaborationLastError})` : ''}`
+                                    : 'idle'}
+                        </span>
+                        {presenceUsers.length > 0 && (
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                                {presenceUsers.slice(0, 8).map((presenceUser) => (
+                                    <span
+                                        key={presenceUser.clientId}
+                                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1"
+                                    >
+                                        <span
+                                            className="h-2 w-2 rounded-full"
+                                            style={{
+                                                backgroundColor:
+                                                    presenceUser.color,
+                                            }}
+                                        />
+                                        {presenceUser.name}
+                                        <span className="text-muted-foreground">
+                                            {presenceUser.permission}
+                                            {presenceUser.cursor
+                                                ? ` at ${presenceUser.cursor.label}`
+                                                : ''}
+                                        </span>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             {isLiveSyncSheet && (
                 <style jsx>{`
                     .rg-column-form-data .rg-cell {
@@ -645,6 +903,7 @@ export function SheetEditor({
                         minRowHeight={35}
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
                         onContextMenu={readOnly ? undefined : handleContextMenu}
+                        onFocusLocationChanged={handleFocusLocationChanged}
                         enableRowSelection={!readOnly}
                         enableColumnSelection={!readOnly}
                     />

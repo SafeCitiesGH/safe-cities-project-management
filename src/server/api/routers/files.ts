@@ -385,6 +385,22 @@ export const filesRouter = createTRPCRouter({
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
 
+            const permissionContext = await getUserPermissionContext(userId)
+            const ancestors = await getFileAncestors(input.fileId)
+            const canEdit = hasPermissionInContext(
+                permissionContext,
+                input.fileId,
+                'edit',
+                ancestors.map((ancestor) => ancestor.id)
+            )
+
+            if (!canEdit) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'You do not have permission to edit this page',
+                })
+            }
+
             // Get current page content to save as version history
             const currentPage = await ctx.db.query.pageContent.findFirst({
                 where: eq(pageContent.fileId, input.fileId),
@@ -492,6 +508,22 @@ export const filesRouter = createTRPCRouter({
         )
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
+
+            const permissionContext = await getUserPermissionContext(userId)
+            const ancestors = await getFileAncestors(input.fileId)
+            const canEdit = hasPermissionInContext(
+                permissionContext,
+                input.fileId,
+                'edit',
+                ancestors.map((ancestor) => ancestor.id)
+            )
+
+            if (!canEdit) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'You do not have permission to edit this sheet',
+                })
+            }
 
             // Get current sheet content and version for history
             const currentSheet = await ctx.db.query.sheetContent.findFirst({
