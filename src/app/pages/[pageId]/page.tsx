@@ -73,14 +73,17 @@ export default function PageView() {
     const [content, setContent] = useState<string>('')
     const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
     const [localPermission, setLocalPermission] = useState<Permission>('view')
-    const [hasInitialContentLoaded, setHasInitialContentLoaded] = useState(false)
-    const [lastSyncedContent, setLastSyncedContent] = useState<string>('');
+    const [hasInitialContentLoaded, setHasInitialContentLoaded] =
+        useState(false)
+    const [lastSyncedContent, setLastSyncedContent] = useState<string>('')
 
     // Version history state
     const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false)
 
     // Add state to track saving status
-    const [savingStatus, setSavingStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+    const [savingStatus, setSavingStatus] = useState<
+        'idle' | 'saving' | 'saved'
+    >('idle')
 
     // Add mutation hook for updating the page
     const updatePageMutation = api.files.updatePageContent.useMutation({
@@ -106,15 +109,24 @@ export default function PageView() {
     // Update content when page data loads, but only once
     useEffect(() => {
         if (page?.content?.content && !hasInitialContentLoaded) {
-            setContent(page.content.content);
-            setLastSyncedContent(page.content.content);
-            setHasInitialContentLoaded(true);
+            setContent(page.content.content)
+            setLastSyncedContent(page.content.content)
+            setHasInitialContentLoaded(true)
         }
         if (page?.content?.updatedAt && !lastSyncedAt) {
-            setLastSyncedAt(page.content.updatedAt ? page.content.updatedAt.toISOString() : null);
+            setLastSyncedAt(
+                page.content.updatedAt
+                    ? page.content.updatedAt.toISOString()
+                    : null
+            )
         }
-    }, [page?.content?.content, page?.content?.updatedAt, hasInitialContentLoaded, lastSyncedAt]);
-    
+    }, [
+        page?.content?.content,
+        page?.content?.updatedAt,
+        hasInitialContentLoaded,
+        lastSyncedAt,
+    ])
+
     // Update local permission when user permission loads
     useEffect(() => {
         if (userPermission) {
@@ -158,19 +170,21 @@ export default function PageView() {
 
     // When polling for remote updates:
     useEffect(() => {
-        if (!pageId || !lastSyncedAt) return;
-    
+        if (!pageId || !lastSyncedAt) return
+
         const interval = setInterval(async () => {
             try {
-                const res = await fetch(`/api/pages/last-updated?pageId=${pageId}`);
-                if (!res.ok) return;
-                const data = await res.json();
+                const res = await fetch(
+                    `/api/pages/last-updated?pageId=${pageId}`
+                )
+                if (!res.ok) return
+                const data = await res.json()
                 if (data.lastUpdated && data.lastUpdated !== lastSyncedAt) {
                     // Only update local content if the user hasn't typed since last sync
                     if (content === lastSyncedContent) {
-                        setContent(data.content);
-                        setLastSyncedContent(data.content);
-                        setLastSyncedAt(data.lastUpdated);
+                        setContent(data.content)
+                        setLastSyncedContent(data.content)
+                        setLastSyncedAt(data.lastUpdated)
                     } else {
                         // Optionally, show a non-intrusive toast: "Remote changes detected, please save or reload."
                         // Or set a "stale" flag in UI to let user choose when/how to resolve
@@ -179,10 +193,10 @@ export default function PageView() {
             } catch (e) {
                 // ignore polling errors
             }
-        }, 5 * 1000);
-    
-        return () => clearInterval(interval);
-    }, [pageId, lastSyncedAt, content, lastSyncedContent]);
+        }, 5 * 1000)
+
+        return () => clearInterval(interval)
+    }, [pageId, lastSyncedAt, content, lastSyncedContent])
 
     // Handle version restoration
     const handleVersionRestore = useCallback((restoredContent: string) => {
@@ -191,14 +205,13 @@ export default function PageView() {
         setIsVersionHistoryOpen(false)
         toast({
             title: 'Version restored',
-            description: 'The page content has been restored to the selected version.',
+            description:
+                'The page content has been restored to the selected version.',
         })
     }, [])
 
     // Determine if the editor should be read-only based on permissions
-    const isReadOnly =
-        isPermissionLoading ||
-        (userPermission !== 'edit' && userPermission !== 'comment')
+    const isReadOnly = isPermissionLoading || userPermission !== 'edit'
 
     if (isLoading || isPermissionLoading) {
         return (
@@ -337,6 +350,8 @@ export default function PageView() {
                 <SimpleEditor
                     initialContent={content}
                     readOnly={isReadOnly}
+                    realtimeDocumentId={pageId}
+                    permission={userPermission ?? 'view'}
                     onUpdate={handleContentChange}
                 />
             </div>

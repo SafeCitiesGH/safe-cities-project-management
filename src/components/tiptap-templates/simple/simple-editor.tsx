@@ -5,6 +5,7 @@ import { EditorContent, EditorContext, useEditor } from '@tiptap/react'
 
 // --- Tiptap Core Extensions ---
 import { StarterKit } from '@tiptap/starter-kit'
+import { Collaboration } from '@tiptap/extension-collaboration'
 import { TaskList } from '@tiptap/extension-task-list'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { Typography } from '@tiptap/extension-typography'
@@ -25,7 +26,11 @@ import UniqueId from 'tiptap-unique-id'
 // --- UI Primitives ---
 import { Button } from '@/components/tiptap-ui-primitive/button'
 import { Spacer } from '@/components/tiptap-ui-primitive/spacer'
-import { Toolbar, ToolbarGroup, ToolbarSeparator } from '@/components/tiptap-ui-primitive/toolbar'
+import {
+    Toolbar,
+    ToolbarGroup,
+    ToolbarSeparator,
+} from '@/components/tiptap-ui-primitive/toolbar'
 
 // --- Tiptap Node ---
 import { ImageUploadNode } from '@/components/tiptap-node/image-upload-node/image-upload-node-extension'
@@ -41,8 +46,16 @@ import { ImageUploadButton } from '@/components/tiptap-ui/image-upload-button'
 import { ListDropdownMenu } from '@/components/tiptap-ui/list-dropdown-menu'
 import { BlockQuoteButton } from '@/components/tiptap-ui/blockquote-button'
 import { CodeBlockButton } from '@/components/tiptap-ui/code-block-button'
-import { ColorHighlightPopover, ColorHighlightPopoverContent, ColorHighlightPopoverButton } from '@/components/tiptap-ui/color-highlight-popover'
-import { LinkPopover, LinkContent, LinkButton } from '@/components/tiptap-ui/link-popover'
+import {
+    ColorHighlightPopover,
+    ColorHighlightPopoverContent,
+    ColorHighlightPopoverButton,
+} from '@/components/tiptap-ui/color-highlight-popover'
+import {
+    LinkPopover,
+    LinkContent,
+    LinkButton,
+} from '@/components/tiptap-ui/link-popover'
 import { MarkButton } from '@/components/tiptap-ui/mark-button'
 import { TextAlignButton } from '@/components/tiptap-ui/text-align-button'
 import { UndoRedoButton } from '@/components/tiptap-ui/undo-redo-button'
@@ -56,6 +69,7 @@ import { LinkIcon } from '@/components/tiptap-icons/link-icon'
 import { useMobile } from '~/hooks/use-mobile'
 import { useWindowSize } from '~/hooks/use-window-size'
 import { useCursorVisibility } from '~/hooks/use-cursor-visibility'
+import { useSupabaseYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
 
 // --- Components ---
 import { ThemeToggle } from '~/components/tiptap-templates/simple/theme-toggle'
@@ -185,12 +199,16 @@ interface SimpleEditorProps {
     initialContent?: string
     readOnly?: boolean
     onUpdate?: (content: string) => void
+    realtimeDocumentId?: string | number
+    permission?: 'view' | 'comment' | 'edit'
 }
 
 export function SimpleEditor({
     initialContent,
     readOnly = false,
     onUpdate,
+    realtimeDocumentId,
+    permission = 'view',
 }: SimpleEditorProps) {
     const isMobile = useMobile()
     const windowSize = useWindowSize()
@@ -198,6 +216,20 @@ export function SimpleEditor({
         'main' | 'highlighter' | 'link'
     >('main')
     const toolbarRef = React.useRef<HTMLDivElement>(null)
+    const collaborationEnabled = Boolean(realtimeDocumentId)
+    const collaboration = useSupabaseYjsCollaboration({
+        documentId: realtimeDocumentId,
+        enabled: collaborationEnabled,
+        permission,
+    })
+    const {
+        lastError: collaborationLastError,
+        markInitialContentLoaded,
+        presenceUsers,
+        shouldLoadInitialContent,
+        status: collaborationStatus,
+        ydoc,
+    } = collaboration
 
     const editor = useEditor({
         immediatelyRender: false,
@@ -211,7 +243,16 @@ export function SimpleEditor({
             },
         },
         extensions: [
-            StarterKit,
+            collaborationEnabled
+                ? StarterKit.configure({ history: false })
+                : StarterKit,
+            ...(collaborationEnabled
+                ? [
+                      Collaboration.configure({
+                          document: ydoc,
+                      }),
+                  ]
+                : []),
             TextAlign.configure({ types: ['heading', 'paragraph'] }),
             Underline,
             TaskList,
@@ -221,17 +262,21 @@ export function SimpleEditor({
             Typography,
             Superscript,
             Subscript,
-            UniqueId.configure({
-                attributeName: 'id',
-                types: [
-                    'paragraph',
-                    'heading',
-                    'orderedList',
-                    'bulletList',
-                    'listItem',
-                ],
-                createId: () => window.crypto.randomUUID(),
-            }),
+            ...(collaborationEnabled
+                ? []
+                : [
+                      UniqueId.configure({
+                          attributeName: 'id',
+                          types: [
+                              'paragraph',
+                              'heading',
+                              'orderedList',
+                              'bulletList',
+                              'listItem',
+                          ],
+                          createId: () => window.crypto.randomUUID(),
+                      }),
+                  ]),
 
             Selection,
             ImageUploadNode.configure({
@@ -244,7 +289,7 @@ export function SimpleEditor({
             TrailingNode,
             Link.configure({ openOnClick: false }),
         ],
-        content: initialContent || content,
+        content: collaborationEnabled ? undefined : initialContent || content,
     })
 
     const bodyRect = useCursorVisibility({
@@ -270,10 +315,32 @@ export function SimpleEditor({
 
     // Handle initialContent changes from parent
     React.useEffect(() => {
+        if (collaborationEnabled) return
+
         if (editor && initialContent && editor.getHTML() !== initialContent) {
             editor.commands.setContent(initialContent)
         }
-    }, [editor, initialContent])
+    }, [collaborationEnabled, editor, initialContent])
+
+    React.useEffect(() => {
+        if (!collaborationEnabled || !editor || !shouldLoadInitialContent) {
+            return
+        }
+
+        const contentToLoad =
+            initialContent && initialContent.trim() !== ''
+                ? initialContent
+                : '<p></p>'
+
+        editor.commands.setContent(contentToLoad)
+        markInitialContentLoaded()
+    }, [
+        collaborationEnabled,
+        editor,
+        initialContent,
+        markInitialContentLoaded,
+        shouldLoadInitialContent,
+    ])
 
     // Handle readOnly prop changes
     React.useEffect(() => {
@@ -323,25 +390,64 @@ export function SimpleEditor({
                         />
                     )}
                 </Toolbar>
+                {collaborationEnabled && (
+                    <div className="flex w-full items-center justify-center border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+                        <div className="flex w-full max-w-4xl items-center justify-between gap-3">
+                            <span>
+                                Live editing:{' '}
+                                {collaborationStatus === 'connected'
+                                    ? 'connected'
+                                    : collaborationStatus === 'connecting'
+                                      ? 'connecting'
+                                      : collaborationStatus === 'error'
+                                        ? `unavailable${collaborationLastError ? ` (${collaborationLastError})` : ''}`
+                                        : 'idle'}
+                            </span>
+                            {presenceUsers.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                    {presenceUsers
+                                        .slice(0, 5)
+                                        .map((presenceUser) => (
+                                            <span
+                                                key={presenceUser.clientId}
+                                                className="inline-flex items-center gap-1"
+                                            >
+                                                <span
+                                                    className="h-2 w-2 rounded-full"
+                                                    style={{
+                                                        backgroundColor:
+                                                            presenceUser.color,
+                                                    }}
+                                                />
+                                                {presenceUser.name}
+                                            </span>
+                                        ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
                 <div className="w-full max-w-4xl my-8 border border-border rounded-lg shadow bg-card p-6">
                     <div
-                      className="content-wrapper"
-                      style={{ cursor: 'text' }}
-                      onMouseDown={e => {
-                        if (e.target === e.currentTarget && editor) {
-                          setTimeout(() => {
-                            // Moves text caret to text's end when you click on bottom whitepace
-                            editor.commands.focus();
-                            editor.commands.setTextSelection(editor.state.doc.content.size);
-                          }, 0);
-                        }
-                      }}
+                        className="content-wrapper"
+                        style={{ cursor: 'text' }}
+                        onMouseDown={(e) => {
+                            if (e.target === e.currentTarget && editor) {
+                                setTimeout(() => {
+                                    // Moves text caret to text's end when you click on bottom whitepace
+                                    editor.commands.focus()
+                                    editor.commands.setTextSelection(
+                                        editor.state.doc.content.size
+                                    )
+                                }, 0)
+                            }
+                        }}
                     >
-                      <EditorContent
-                        editor={editor}
-                        role="presentation"
-                        className="simple-editor-content"
-                      />
+                        <EditorContent
+                            editor={editor}
+                            role="presentation"
+                            className="simple-editor-content"
+                        />
                     </div>
                 </div>
             </div>
