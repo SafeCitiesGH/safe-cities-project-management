@@ -2,7 +2,7 @@
 
 import React from 'react'
 import Image from 'next/image'
-import icon from '~/app/icons/icon.png'
+import icon from '~/app/icons/icon.jpg'
 import { cn } from '~/lib/utils'
 
 interface SafeCitiesProps {
