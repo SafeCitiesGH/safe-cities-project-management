@@ -70,7 +70,10 @@ const calendarStyles = `
     height: 42px;
     border-radius: 10px;
     border: 1px solid hsl(var(--border));
-    background: hsl(var(--card));
+    background: linear-gradient(145deg, hsl(var(--card)), hsl(var(--accent) / 0.35));
+    box-shadow:
+      0 12px 22px -16px hsl(var(--primary) / 0.35),
+      inset 0 1px 0 hsl(0 0% 100% / 0.5);
   }
 
   .calendar-large .rdp-table {
@@ -95,25 +98,40 @@ const calendarStyles = `
   .calendar-large .rdp-cell {
     height: 100%;
     border: 1px solid hsl(var(--border));
-    padding: 0;
+    padding: 4px;
+    background: hsl(var(--background) / 0.35);
   }
 
   .calendar-large .rdp-day {
     width: 100%;
     height: 100%;
     min-height: 95px;
-    border-radius: 0;
+    border-radius: 18px;
     font-size: 1rem;
     font-weight: 600;
+    background: linear-gradient(155deg, hsl(var(--card)), hsl(var(--accent) / 0.24));
+    box-shadow:
+      0 16px 24px -18px hsl(var(--primary) / 0.28),
+      0 2px 8px -6px hsl(var(--foreground) / 0.12),
+      inset 0 1px 0 hsl(0 0% 100% / 0.55);
+    transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
   }
 
   .calendar-large .rdp-day:hover {
-    background: hsl(var(--muted));
+    background: linear-gradient(155deg, hsl(var(--card)), hsl(var(--accent) / 0.42));
+    transform: translateY(-1px);
+    box-shadow:
+      0 20px 28px -18px hsl(var(--primary) / 0.34),
+      0 6px 12px -8px hsl(var(--foreground) / 0.12),
+      inset 0 1px 0 hsl(0 0% 100% / 0.6);
   }
 
   .calendar-large .rdp-day_selected {
-    background: hsl(var(--primary) / 0.25);
+    background: linear-gradient(155deg, hsl(var(--primary) / 0.22), hsl(var(--accent) / 0.58));
     color: hsl(var(--foreground));
+    box-shadow:
+      0 22px 32px -18px hsl(var(--primary) / 0.42),
+      inset 0 1px 0 hsl(0 0% 100% / 0.45);
   }
 
   .calendar-large .rdp-day_today {
@@ -500,12 +518,12 @@ function GoogleCalendarPageContent() {
 
       <div className="flex-1 overflow-hidden p-4">
         <div className="grid gap-6 h-full grid-cols-1 lg:grid-cols-3">
-          <Card className="lg:col-span-2 flex min-h-[720px] flex-col overflow-hidden rounded-2xl">
-            <CardHeader className="border-b px-6 py-6">
+          <Card className="lg:col-span-2 flex min-h-[720px] flex-col overflow-hidden rounded-[2rem]">
+            <CardHeader className="border-b px-7 py-6">
               <CardTitle className="text-xl">Calendar</CardTitle>
             </CardHeader>
 
-            <CardContent className="flex-1 overflow-hidden p-6">
+            <CardContent className="flex-1 overflow-hidden p-7">
               <div className="calendar-large h-full w-full">
                 <Calendar
                   mode="single"
@@ -520,7 +538,7 @@ function GoogleCalendarPageContent() {
                     caption: "relative mb-2 flex items-center justify-center",
                     caption_label: "text-2xl font-bold",
                     nav: "absolute left-0 right-0 top-0 flex items-center justify-between",
-                    nav_button: "h-8 w-8 rounded-lg bg-black/20 hover:bg-muted",
+                    nav_button: "h-8 w-8 rounded-xl border border-border/70 bg-background/70 shadow-sm hover:bg-accent/60",
                     nav_button_previous: "absolute left-0",
                     nav_button_next: "absolute right-0",
                     table: "w-full table-fixed border-collapse",
@@ -529,10 +547,10 @@ function GoogleCalendarPageContent() {
                       "flex h-10 items-center justify-center text-sm font-semibold uppercase text-muted-foreground",
                     row: "grid grid-cols-7",
                     cell:
-                      "relative h-[80px] border border-border p-0 text-center",
+                      "relative h-[88px] border border-border/70 bg-background/25 p-1 text-center",
                     day:
-                      "h-full w-full rounded-none p-0 text-base font-semibold hover:bg-muted",
-                    day_selected: "bg-primary/20 text-foreground hover:bg-primary/25",
+                      "h-full w-full rounded-2xl p-0 text-base font-semibold shadow-sm hover:bg-muted",
+                    day_selected: "bg-primary/20 text-foreground shadow-md hover:bg-primary/25",
                     day_today: "text-primary",
                     day_outside: "text-muted-foreground/40",
                   }}
@@ -541,8 +559,8 @@ function GoogleCalendarPageContent() {
             </CardContent>
           </Card>
 
-          <Card className="flex flex-col overflow-hidden">
-            <CardHeader className="pb-3 border-b">
+          <Card className="flex flex-col overflow-hidden rounded-[2rem]">
+            <CardHeader className="border-b pb-3 px-6 pt-6">
               <div className="space-y-1">
                 <CardTitle className="text-lg">Events</CardTitle>
                 <p className="text-sm text-muted-foreground">{format(selectedDate, 'EEE, MMM d, yyyy')}</p>
@@ -553,7 +571,7 @@ function GoogleCalendarPageContent() {
                 </p>
               </div>
             </CardHeader>
-            <CardContent className="flex-1 overflow-auto p-4">
+            <CardContent className="flex-1 overflow-auto p-5">
               {!googleStatus.connected ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                   <CalendarDays className="text-muted-foreground" />
@@ -573,7 +591,7 @@ function GoogleCalendarPageContent() {
               ) : (
                 <div className="space-y-3">
                   {selectedEvents.map((event) => (
-                    <div key={event.id} className="rounded-md border border-input p-3 shadow-sm">
+                    <div key={event.id} className="rounded-2xl border border-input/80 bg-[linear-gradient(155deg,hsl(var(--card)),hsl(var(--accent)/0.26))] p-4 shadow-[0_18px_36px_-24px_hsl(var(--primary)/0.34),0_6px_12px_-8px_hsl(var(--foreground)/0.12)]">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold">{event.title}</p>
@@ -600,7 +618,7 @@ function GoogleCalendarPageContent() {
               {googleStatus.connected && nextEvent && (
                 <div className="mt-6 pt-6 border-t">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">NEXT EVENT</p>
-                  <div className="p-3 rounded-lg bg-muted">
+                  <div className="rounded-2xl border border-border/70 bg-[linear-gradient(155deg,hsl(var(--card)),hsl(var(--accent)/0.22))] p-4 shadow-[0_18px_30px_-22px_hsl(var(--primary)/0.28)]">
                     <p className="font-semibold text-sm">{nextEvent.title}</p>
                     <p className="text-xs text-muted-foreground mt-1">{format(new Date(nextEvent.start), 'MMM d, yyyy')}</p>
                     <p className="text-xs text-muted-foreground">{formatTimeRange(nextEvent)}</p>
