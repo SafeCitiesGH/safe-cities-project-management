@@ -143,7 +143,7 @@ export async function getAccessibleFiles(
     const filesToCheck = Array.from(accessibleFileIds)
     for (const fileId of filesToCheck) {
         const file = allFiles.find((f) => f.id === fileId)
-        if (file && file.parentId) {
+        if (file?.parentId) {
             let currentParentId: number | null = file.parentId
             while (currentParentId) {
                 accessibleFileIds.add(currentParentId)

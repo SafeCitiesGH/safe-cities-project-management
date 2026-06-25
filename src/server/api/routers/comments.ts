@@ -32,7 +32,7 @@ export const commentsRouter = createTRPCRouter({
                 })
             }
 
-            let whereConditions = [eq(comments.fileId, input.fileId)]
+            const whereConditions = [eq(comments.fileId, input.fileId)]
 
             if (!input.includeResolved) {
                 whereConditions.push(eq(comments.isResolved, false))

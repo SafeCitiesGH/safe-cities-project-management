@@ -142,7 +142,7 @@ export function NewFileDialog({
                     parentId: data.parentId ?? undefined,
                 })
             }
-            if (data && data.id) {
+            if (data?.id) {
                 navigateToFile(router, data.id, data.type)
             }
             setFileName('')

@@ -340,7 +340,7 @@ function FileTreeNode({
         // Retrieve the full tree from the root element props
         const rootElement = document.querySelector(
             '[data-file-tree-root="true"]'
-        ) as any
+        )
         const items: FileNode[] = rootElement?.__fileTreeProps?.items || []
 
         // Helper to find a node by id in the tree

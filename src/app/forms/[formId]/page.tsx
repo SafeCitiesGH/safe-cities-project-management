@@ -124,7 +124,7 @@ export default function FormView() {
             <FileHeader
                 filename={formData.file.name}
                 fileId={formData.file.id}
-                permission={userPermission as Permission}
+                permission={userPermission!}
                 savingStatus={savingStatus}
             />
 
