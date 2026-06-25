@@ -640,13 +640,12 @@ export function SheetEditor({
             const rowIds = selectedRowIds as string[]
             const protectedRowIds = ['header', 'alphabetical-header', 'form-field-header']
 
-            // Rename Column: right-click on a header row cell (single col, col > 0)
-            const activeHeaderRowId = rowIds.find(
-                (r) => r === 'header' || r === 'alphabetical-header'
-            )
-            if (activeHeaderRowId && colIds.length === 1 && colIds[0]! > 0) {
+            // Rename Column: column-selection mode, single column, col > 0
+            if (selectionMode === 'column' && colIds.length === 1 && colIds[0]! > 0) {
                 const colIndex = colIds[0]!
-                const headerRow = sheet.rows.find((r) => r.rowId === activeHeaderRowId)
+                const headerRow =
+                    sheet.rows.find((r) => r.rowId === 'header') ??
+                    sheet.rows.find((r) => r.rowId === 'alphabetical-header')
                 const currentText =
                     (headerRow?.cells[colIndex] as { text?: string })?.text ?? ''
                 newOptions.push({
@@ -654,7 +653,7 @@ export function SheetEditor({
                     label: 'Rename Column',
                     handler: () => {
                         setRenameState({
-                            rowId: activeHeaderRowId,
+                            rowId: (headerRow?.rowId ?? 'header') as string,
                             colIndex,
                             currentText,
                             label: 'Column',
@@ -663,9 +662,9 @@ export function SheetEditor({
                 })
             }
 
-            // Rename Row: right-click on col 0, single non-header row
+            // Rename Row: row-selection mode, single non-header row
             if (
-                colIds.includes(0) &&
+                selectionMode === 'row' &&
                 rowIds.length === 1 &&
                 !protectedRowIds.includes(rowIds[0]!)
             ) {
@@ -686,29 +685,52 @@ export function SheetEditor({
                 })
             }
 
-            // Delete Column: any user-added, non-protected column (col > 0)
-            const deletableCols = colIds.filter(
-                (colId) =>
-                    colId > 0 &&
-                    (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
-            )
-            if (deletableCols.length > 0) {
-                newOptions.push({
-                    id: 'deleteColumn',
-                    label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
-                    handler: () => {
-                        // Sort descending so splicing doesn't shift earlier indices
-                        const toDelete = [...deletableCols].sort((a, b) => b - a)
-                        const newSheet = { ...sheet }
-                        newSheet.rows = newSheet.rows.map((row) => {
-                            const newCells = [...row.cells] as DefaultCellTypes[]
-                            toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
-                            return { ...row, cells: newCells }
-                        })
-                        newSheet.cells = newSheet.rows.map((row) => row.cells)
-                        commitChange(newSheet)
-                    },
-                })
+            // Delete Column: column-selection mode, non-protected columns > 0
+            if (selectionMode === 'column') {
+                const deletableCols = colIds.filter(
+                    (colId) =>
+                        colId > 0 &&
+                        (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
+                )
+                if (deletableCols.length > 0) {
+                    newOptions.push({
+                        id: 'deleteColumn',
+                        label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
+                        handler: () => {
+                            const toDelete = [...deletableCols].sort((a, b) => b - a)
+                            const newSheet = { ...sheet }
+                            newSheet.rows = newSheet.rows.map((row) => {
+                                const newCells = [...row.cells] as DefaultCellTypes[]
+                                toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
+                                return { ...row, cells: newCells }
+                            })
+                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            commitChange(newSheet)
+                        },
+                    })
+                }
+            }
+
+            // Delete Row: row-selection mode, non-header rows only
+            if (selectionMode === 'row') {
+                const deletableRows = rowIds.filter(
+                    (r) => !protectedRowIds.includes(r)
+                )
+                if (deletableRows.length > 0) {
+                    newOptions.push({
+                        id: 'deleteRow',
+                        label: `Delete Row${deletableRows.length > 1 ? 's' : ''}`,
+                        handler: () => {
+                            const toDelete = new Set(deletableRows)
+                            const newSheet = { ...sheet }
+                            newSheet.rows = newSheet.rows.filter(
+                                (row) => !toDelete.has(row.rowId as string)
+                            )
+                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            commitChange(newSheet)
+                        },
+                    })
+                }
             }
 
             return newOptions
@@ -928,7 +950,7 @@ export function SheetEditor({
                             value={renameInputValue}
                             onChange={(e) => setRenameInputValue(e.target.value)}
                             className="w-full border rounded px-3 py-1.5 text-sm mb-3 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                            onKeyDown={(e) => {
                                 if (e.key === 'Enter') applyRename(renameInputValue)
                                 if (e.key === 'Escape') setRenameState(null)
                             }}

@@ -8,11 +8,16 @@ import { Button } from '~/components/ui/button'
 import { Download, File as FileIcon } from 'lucide-react'
 import { SidebarTrigger } from '~/components/ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
+import { FileUnlockDialog } from '~/components/file-unlock-dialog'
 
 export default function UploadPage() {
     const isMobile = useMobile()
     const { uploadId } = useParams<{ uploadId: string }>()
     const idNum = Number(uploadId)
+    // Password supplied via the unlock dialog for protected files (Feature 2)
+    const [filePassword, setFilePassword] = useState<string | undefined>(
+        undefined
+    )
     const {
         data: file,
         isLoading,
@@ -21,14 +26,17 @@ export default function UploadPage() {
         {
             id: idNum,
             expectedType: 'upload',
+            password: filePassword,
         },
         {
             enabled: !!idNum,
             retry: (failureCount, error) => {
-                // Don't retry on permission or type validation errors
+                // Don't retry on permission, type, or password errors
                 if (
                     error?.data?.code === 'FORBIDDEN' ||
-                    error?.data?.code === 'BAD_REQUEST'
+                    error?.data?.code === 'BAD_REQUEST' ||
+                    error?.data?.code === 'UNAUTHORIZED' ||
+                    error?.data?.code === 'TOO_MANY_REQUESTS'
                 ) {
                     return false
                 }
@@ -36,6 +44,11 @@ export default function UploadPage() {
             },
         }
     )
+
+    const needsPassword =
+        error?.data?.code === 'UNAUTHORIZED' &&
+        (error.message === 'PASSWORD_REQUIRED' ||
+            error.message === 'PASSWORD_INCORRECT')
     const [fileUrl, setFileUrl] = useState<string | null>(null)
 
     useEffect(() => {
@@ -50,6 +63,15 @@ export default function UploadPage() {
     }, [file?.path])
 
     if (isLoading) return <div className="p-8 text-center">Loading...</div>
+
+    if (needsPassword) {
+        return (
+            <FileUnlockDialog
+                fileId={idNum}
+                onUnlocked={(pw) => setFilePassword(pw)}
+            />
+        )
+    }
 
     if (error) {
         return (

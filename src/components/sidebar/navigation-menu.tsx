@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Bell, Home, MessageSquare, Users } from 'lucide-react'
+import { Bell, CalendarDays, Home, MessageSquare, Users } from 'lucide-react'
 import {
     SidebarGroup,
     SidebarMenu,
@@ -20,6 +20,12 @@ const navigationItems = [
         href: '/notifications',
         label: 'Notifications',
         icon: Bell,
+        adminOnly: false,
+    },
+    {
+        href: '/google-calendar',
+        label: 'Google Calendar',
+        icon: CalendarDays,
         adminOnly: false,
     },
     { href: '/chats', label: 'Chats', icon: MessageSquare, adminOnly: false },

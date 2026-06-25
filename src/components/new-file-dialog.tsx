@@ -12,8 +12,10 @@ import {
     ChevronDown,
     UploadCloud,
     AlertTriangle,
+    Lock,
 } from 'lucide-react'
 import { Button } from '~/components/ui/button'
+import { Switch } from '~/components/ui/switch'
 import { Card, CardContent } from '~/components/ui/card'
 import {
     Dialog,
@@ -85,6 +87,16 @@ export function NewFileDialog({
     )
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [isUploading, setIsUploading] = useState(false)
+    // Password protection (Feature 2)
+    const [passwordProtect, setPasswordProtect] = useState(false)
+    const [password, setPassword] = useState('')
+    const [confirmPassword, setConfirmPassword] = useState('')
+
+    const MIN_PASSWORD_LENGTH = 4
+    const passwordsMatch = password === confirmPassword
+    const passwordValid =
+        !passwordProtect ||
+        (password.length >= MIN_PASSWORD_LENGTH && passwordsMatch)
     const { data: fileTree = [], isLoading: isLoadingFileTree } =
         api.files.getFilteredFileTree.useQuery()
     const utils = api.useUtils()
@@ -137,6 +149,9 @@ export function NewFileDialog({
             setSelectedParentId(null)
             setSelectedFile(null)
             setIsUploading(false)
+            setPasswordProtect(false)
+            setPassword('')
+            setConfirmPassword('')
         },
     })
 
@@ -147,6 +162,9 @@ export function NewFileDialog({
             setSelectedParentId(parentId ?? null)
             setSelectedFile(null)
             setIsUploading(false)
+            setPasswordProtect(false)
+            setPassword('')
+            setConfirmPassword('')
 
             // Set file type only if provided and different from current
             if (fileType && fileType !== selectedType) {
@@ -172,6 +190,10 @@ export function NewFileDialog({
     ])
 
     const handleCreate = async () => {
+        // Block submit if password protection is on but invalid
+        if (!passwordValid) return
+        const protectionPassword = passwordProtect ? password : undefined
+
         if (selectedType === 'upload') {
             if (!selectedFile) return
             setIsUploading(true)
@@ -184,6 +206,7 @@ export function NewFileDialog({
                     parentId: selectedParentId ?? undefined,
                     path, // This is the Supabase storage path
                     mimetype: selectedFile.type,
+                    password: protectionPassword,
                 })
             } catch (err: any) {
                 alert('Failed to upload file: ' + (err?.message || err))
@@ -217,6 +240,7 @@ export function NewFileDialog({
                 selectedType === 'programme'
                     ? undefined
                     : (selectedParentId ?? undefined),
+            password: protectionPassword,
         })
     }
 
@@ -486,6 +510,74 @@ export function NewFileDialog({
                             </p>
                         </div>
                     )}
+
+                    {/* Password protection (Feature 2) */}
+                    <div className="grid gap-3 rounded-md border p-3">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Lock className="h-4 w-4 text-muted-foreground" />
+                                <div>
+                                    <Label htmlFor="password-protect">
+                                        Password protect this file
+                                    </Label>
+                                    <p className="text-xs text-muted-foreground">
+                                        You&apos;ll be asked for this password
+                                        each time the file is opened.
+                                    </p>
+                                </div>
+                            </div>
+                            <Switch
+                                id="password-protect"
+                                checked={passwordProtect}
+                                onCheckedChange={(checked) => {
+                                    setPasswordProtect(checked)
+                                    if (!checked) {
+                                        setPassword('')
+                                        setConfirmPassword('')
+                                    }
+                                }}
+                                disabled={createFileMutation.isPending}
+                            />
+                        </div>
+
+                        {passwordProtect && (
+                            <div className="grid gap-2">
+                                <Input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) =>
+                                        setPassword(e.target.value)
+                                    }
+                                    placeholder="Enter password"
+                                    autoComplete="new-password"
+                                    disabled={createFileMutation.isPending}
+                                />
+                                <Input
+                                    type="password"
+                                    value={confirmPassword}
+                                    onChange={(e) =>
+                                        setConfirmPassword(e.target.value)
+                                    }
+                                    placeholder="Confirm password"
+                                    autoComplete="new-password"
+                                    disabled={createFileMutation.isPending}
+                                />
+                                {password.length > 0 &&
+                                    password.length < MIN_PASSWORD_LENGTH && (
+                                        <p className="text-xs text-red-500">
+                                            Password must be at least{' '}
+                                            {MIN_PASSWORD_LENGTH} characters.
+                                        </p>
+                                    )}
+                                {confirmPassword.length > 0 &&
+                                    !passwordsMatch && (
+                                        <p className="text-xs text-red-500">
+                                            Passwords do not match.
+                                        </p>
+                                    )}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <DialogFooter>
                     <Button
@@ -508,6 +600,7 @@ export function NewFileDialog({
                                           editableFilesCount === 0)) ||
                                   (selectedType === 'programme' &&
                                       !canCreateProgramme)) ||
+                            !passwordValid ||
                             createFileMutation.isPending
                         }
                     >
