@@ -19,17 +19,19 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
 
     if (shouldHideSidebar) {
         return (
-            <div className="min-h-screen w-full">
+            <div className="app-shell min-h-screen w-full">
                 <main className="w-full">{children}</main>
             </div>
         )
     }
 
     return (
-        <div className="flex min-h-screen w-full">
+        <div className="app-shell flex min-h-screen w-full">
             <AppSidebar />
-            <div className="flex-1 flex flex-col overflow-hidden">
-                <main className="flex-1 overflow-auto">{children}</main>
+            <div className="flex flex-1 flex-col overflow-hidden">
+                <main className="flex-1 overflow-auto px-3 pb-4 pt-3 md:px-5 md:pb-5 md:pt-4">
+                    {children}
+                </main>
             </div>
             <ChatSidebar />
         </div>

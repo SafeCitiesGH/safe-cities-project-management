@@ -6,7 +6,6 @@ import { Input } from '~/components/ui/input'
 import { SidebarHeader, SidebarTrigger, useSidebar } from '~/components/ui/sidebar'
 import { ThemeToggle } from '../tiptap-templates/simple/theme-toggle'
 import { SafeCities } from '../SafeCities'
-import { useMobile } from '~/hooks/use-mobile'
 import { cn } from '~/lib/utils'
 
 export type FileTypeFilter = 'all' | 'page' | 'sheet' | 'form' | 'upload' | 'folder'
@@ -35,21 +34,24 @@ export function SidebarHeaderComponent({
     typeFilter,
     onTypeFilterChange,
 }: SidebarHeaderComponentProps) {
-    const isMobile = useMobile()
     const { state } = useSidebar()
 
     return (
         <SidebarHeader className="flex flex-col gap-3 p-4">
-            <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gray-800">
-                        <SafeCities size={18} />
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-[3rem] w-[5.2rem] shrink-0 items-center justify-center rounded-[1.05rem] border border-sidebar-border/90 bg-gradient-to-br from-sidebar-primary/10 to-sidebar-accent/45 px-0.5 py-0.5 shadow-sm">
+                        <SafeCities
+                            width={112}
+                            height={60}
+                            className="max-h-[3.05rem] max-w-[4.9rem]"
+                        />
                     </div>
-                    <div className="flex flex-col">
-                        <span className="text-sm font-semibold">
+                    <div className="flex min-w-0 flex-col justify-center">
+                        <span className="text-[0.95rem] font-bold leading-none tracking-[0.01em] text-foreground">
                             Safe Cities
                         </span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="mt-1 text-[0.6rem] font-medium uppercase tracking-[0.2em] text-primary/80">
                             Project Management
                         </span>
                     </div>
@@ -62,7 +64,7 @@ export function SidebarHeaderComponent({
 
             <Button
                 size="sm"
-                className="w-full justify-start gap-2"
+                className="w-full justify-start gap-2 shadow-sm"
                 onClick={onNewFileClick}
             >
                 <Plus size={16} />
@@ -96,10 +98,10 @@ export function SidebarHeaderComponent({
                         key={option.value}
                         onClick={() => onTypeFilterChange(option.value)}
                         className={cn(
-                            'rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
+                            'rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors',
                             typeFilter === option.value
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                                ? 'border-primary/40 bg-primary text-primary-foreground'
+                                : 'border-transparent bg-muted/80 text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground'
                         )}
                     >
                         {option.label}
