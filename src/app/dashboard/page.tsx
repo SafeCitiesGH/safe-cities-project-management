@@ -175,6 +175,7 @@ export default function DashboardPage() {
                             {programs?.map((program) => (
                                 <ProgramCard
                                     key={program.id}
+                                    programId={program.id}
                                     title={program.name}
                                     description="No description available"
                                     items={childCounts?.[program.id] ?? 0}
