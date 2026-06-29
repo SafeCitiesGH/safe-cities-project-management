@@ -1,18 +1,31 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import Image from 'next/image'
-import { useTheme } from 'next-themes'
-import icon from '~/app/icons/icon.png'
+import icon from '~/app/icons/icon.jpg'
+import { cn } from '~/lib/utils'
 
 interface SafeCitiesProps {
-    size?: number
+    width?: number
+    height?: number
     alt?: string
+    className?: string
 }
 
 export function SafeCities({
-    size = 18,
+    width = 88,
+    height = 52,
     alt = 'Safe Cities Logo',
+    className,
 }: SafeCitiesProps) {
-    return <Image src={icon} width={size} height={size} alt={alt} />
+    return (
+        <Image
+            src={icon}
+            width={width}
+            height={height}
+            alt={alt}
+            className={cn('h-auto w-auto object-contain', className)}
+            priority
+        />
+    )
 }

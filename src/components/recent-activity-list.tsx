@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar"
+import { Avatar, AvatarFallback } from "~/components/ui/avatar"
 import { Bell } from "lucide-react"
 import { Badge } from "~/components/ui/badge"
 import { formatDistanceToNow } from "date-fns"
@@ -33,11 +33,11 @@ export function RecentActivityList({ notifications, isLoading }: RecentActivityL
   }
 
   return (
-    <div className="divide-y">
+    <div className="divide-y divide-border/60">
       {notifications.slice(0, 5).map((notification) => (
-        <div key={notification.id} className="flex items-center gap-3 p-4">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback>
+        <div key={notification.id} className="group flex items-start gap-3 bg-[linear-gradient(90deg,transparent_0%,hsl(var(--background)/0.16)_35%,transparent_100%)] p-4 transition-colors hover:bg-[linear-gradient(90deg,hsl(var(--primary)/0.05)_0%,hsl(var(--accent)/0.24)_100%)]">
+          <Avatar className="h-9 w-9 ring-1 ring-border/60">
+            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-accent/70 text-foreground">
               {(notification.userName ?? "U").split(" ").map(n => n[0]).join("").toUpperCase()}
             </AvatarFallback>
           </Avatar>
@@ -46,14 +46,16 @@ export function RecentActivityList({ notifications, isLoading }: RecentActivityL
               <p className="text-sm">
                 <span className="font-medium">{notification.userName || "Unknown User"}</span>
               </p>
-              <Badge variant="secondary" className="text-xs">
+              <Badge variant="secondary" className="border border-border/60 bg-background/60 text-xs">
                 {notification.type || "notification"}
               </Badge>
             </div>
-            <p className="text-sm text-muted-foreground">{notification.content}</p>
-            <p className="text-xs text-muted-foreground">
-              {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
-            </p>
+            <div className="rounded-2xl border border-border/50 bg-background/40 px-3 py-2 shadow-sm transition-colors group-hover:border-border/80 group-hover:bg-background/55">
+              <p className="text-sm text-muted-foreground">{notification.content}</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.16em] text-muted-foreground/75">
+                {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+              </p>
+            </div>
           </div>
         </div>
       ))}

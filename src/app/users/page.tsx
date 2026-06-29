@@ -94,10 +94,12 @@ export default function UsersPage() {
     })
 
     const updateUserRole = api.user.updateUserRole.useMutation({
-        onSuccess: async (data) => {
+        onSuccess: async () => {
             toast({
-                title: 'Success',
-                description: data?.message || 'User role updated successfully',
+                title: 'Role updated',
+                description:
+                    'For the change to fully take effect, the user must refresh their page or sign out and back in.',
+                duration: 8000,
             })
             await refetchUsers()
         },
