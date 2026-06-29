@@ -15,7 +15,10 @@
 # Setup instructions (one-time, done by repo owner):
 #   1. Go to: https://github.com/<org>/<repo>/settings/secrets/actions
 #   2. Add two repository secrets:
-#        SUPABASE_URL      → e.g. https://cycfkkfxngjbmqpojiky.supabase.co
+#        SUPABASE_URL      → the project URL. EITHER the bare base
+#                            (https://<ref>.supabase.co) OR a value that already
+#                            includes /rest/v1/ is accepted — the workflow
+#                            normalizes it, so it can no longer be misconfigured.
 #        SUPABASE_ANON_KEY → the anon/public JWT from Supabase > Project Settings > API
 #   3. That's it. The workflow runs automatically every 3 days.
 # ============================================================
@@ -38,14 +41,28 @@ jobs:
 
     steps:
       - name: Send keep-alive ping to Supabase REST API
+        env:
+          # Pass secrets via the environment instead of interpolating them
+          # directly into the shell script (avoids shell-injection risk).
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          echo "Pinging Supabase at ${{ secrets.SUPABASE_URL }} ..."
+          # Normalize the base URL so the workflow works whether the secret is
+          # stored as the bare base (https://<ref>.supabase.co) or already
+          # includes the REST path. This prevents a doubled "/rest/v1//rest/v1/"
+          # path, which returns 404 and fails the job on every run.
+          BASE="${SUPABASE_URL%/}"        # drop one trailing slash, if any
+          BASE="${BASE%/rest/v1}"         # drop trailing /rest/v1, if present
+          BASE="${BASE%/}"                # drop any slash left behind
+          ENDPOINT="${BASE}/rest/v1/"
+
+          echo "Pinging Supabase at ${ENDPOINT} ..."
 
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 15 \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/")
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            "${ENDPOINT}")
 
           echo "HTTP response status: $HTTP_STATUS"
 
