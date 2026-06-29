@@ -3,23 +3,28 @@
 # ============================================================
 # Purpose:
 #   Supabase free-tier databases pause after 7 days of inactivity
-#   and are fully deactivated after 90 days. This workflow pings
-#   the Supabase REST API on a schedule to prevent both thresholds.
+#   and are fully deactivated after 90 days. This workflow runs a
+#   trivial SQL query on a schedule to generate real database
+#   activity and prevent both thresholds.
+#
+# Why a SQL query (not a REST ping)?
+#   This app connects to Postgres directly (Drizzle + the Supabase
+#   connection pooler) and uses Clerk for auth, so the Supabase REST
+#   API / anon role isn't used. The bare /rest/v1/ endpoint is also
+#   restricted to the service_role key, so an anon/publishable key
+#   can never succeed there. Running "select 1" over the same pooler
+#   the app uses is the most reliable keep-alive.
 #
 # Security model:
-#   - Uses ONLY the anon (public) key — read-only, no elevated privileges.
-#   - Credentials are stored as GitHub repository Secrets, never hardcoded.
-#   - The ping is a GET request that returns no user data.
-#   - No writes, no deletes, no schema access.
+#   - The connection string is stored as a GitHub repository Secret,
+#     never hardcoded, and is never printed to the logs.
+#   - The query is read-only ("select 1") — no writes, no schema access.
 #
 # Setup instructions (one-time, done by repo owner):
 #   1. Go to: https://github.com/<org>/<repo>/settings/secrets/actions
-#   2. Add two repository secrets:
-#        SUPABASE_URL      → the project URL. EITHER the bare base
-#                            (https://<ref>.supabase.co) OR a value that already
-#                            includes /rest/v1/ is accepted — the workflow
-#                            normalizes it, so it can no longer be misconfigured.
-#        SUPABASE_ANON_KEY → the anon/public JWT from Supabase > Project Settings > API
+#   2. Add ONE repository secret:
+#        DATABASE_URL → the full Postgres connection string from .env,
+#                       e.g. postgresql://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres
 #   3. That's it. The workflow runs automatically every 3 days.
 # ============================================================
 
@@ -36,46 +41,29 @@ on:
 
 jobs:
   ping:
-    name: Ping Supabase database
+    name: Keep Supabase database active
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send keep-alive ping to Supabase REST API
+      - name: Run keep-alive query against Supabase Postgres
         env:
-          # Pass secrets via the environment instead of interpolating them
-          # directly into the shell script (avoids shell-injection risk).
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Passed via env (never interpolated into the script) and never echoed.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Supabase requires TLS connections.
+          PGSSLMODE: require
         run: |
-          # Normalize the base URL so the workflow works whether the secret is
-          # stored as the bare base (https://<ref>.supabase.co) or already
-          # includes the REST path. This prevents a doubled "/rest/v1//rest/v1/"
-          # path, which returns 404 and fails the job on every run.
-          BASE="${SUPABASE_URL%/}"        # drop one trailing slash, if any
-          BASE="${BASE%/rest/v1}"         # drop trailing /rest/v1, if present
-          BASE="${BASE%/}"                # drop any slash left behind
-          ENDPOINT="${BASE}/rest/v1/"
-
-          echo "Pinging Supabase at ${ENDPOINT} ..."
-
-          # Only the apikey header is needed for a keep-alive ping. We do NOT
-          # send "Authorization: Bearer" because Supabase's new publishable
-          # keys (sb_publishable_...) are not JWTs; sending one as a Bearer
-          # token makes the gateway reject it with 401. apikey-only works for
-          # both the new keys and the legacy anon JWT.
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 15 \
-            -H "apikey: ${SUPABASE_ANON_KEY}" \
-            "${ENDPOINT}")
-
-          echo "HTTP response status: $HTTP_STATUS"
-
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "✅ Keep-alive ping successful. Database is active."
-          elif [ "$HTTP_STATUS" -eq 503 ]; then
-            echo "⚠️  Supabase returned 503 — database is paused. Log in to https://supabase.com to manually restore it."
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL secret is not set. Add it under repo Settings > Secrets and variables > Actions."
             exit 1
+          fi
+
+          echo "Running keep-alive query (select 1) against the Supabase pooler ..."
+
+          # psql exits non-zero on any connection or auth failure, which fails
+          # the job. The connection string itself is never printed.
+          if psql "$DATABASE_URL" -tA -c "select 1;" > /dev/null; then
+            echo "✅ Keep-alive query succeeded. Database is active."
           else
-            echo "❌ Unexpected HTTP status $HTTP_STATUS. Check your SUPABASE_URL and SUPABASE_ANON_KEY secrets."
+            echo "❌ Keep-alive query failed. Check the DATABASE_URL secret (host, password, port)."
             exit 1
           fi
