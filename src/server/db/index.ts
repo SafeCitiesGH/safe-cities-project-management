@@ -1,16 +1,29 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { Client } from 'pg'
+import { Pool, type PoolConfig } from 'pg'
 
 import { env } from '~/env'
 import * as schema from './schema'
 
-const client = new Client({
-    connectionString: env.DATABASE_URL,
-})
+const globalForDb = globalThis as typeof globalThis & {
+    __safeCitiesDbPool?: Pool
+}
 
-await client.connect()
-export const db = drizzle(client, {
-    schema: schema,
-})
+function createPool() {
+    const config: PoolConfig = {
+        connectionString: env.DATABASE_URL,
+        max: env.NODE_ENV === 'production' ? 10 : 5,
+        idleTimeoutMillis: 30_000,
+    }
 
-// TODO: add back in prod additions
+    return new Pool(config)
+}
+
+const pool = globalForDb.__safeCitiesDbPool ?? createPool()
+
+if (env.NODE_ENV !== 'production') {
+    globalForDb.__safeCitiesDbPool = pool
+}
+
+export const db = drizzle(pool, {
+    schema,
+})

@@ -76,6 +76,53 @@ export async function upsertGoogleCalendarConnection(
         })
 }
 
+async function persistOAuthCredentials(
+    connection: NonNullable<Awaited<ReturnType<typeof getGoogleCalendarConnection>>>,
+    credentials: {
+        access_token?: string | null
+        refresh_token?: string | null
+        scope?: string | null
+        token_type?: string | null
+        expiry_date?: number | null
+    }
+) {
+    const nextAccessToken = credentials.access_token ?? connection.accessToken ?? null
+    const nextRefreshToken =
+        credentials.refresh_token ?? connection.refreshToken ?? null
+    const nextScope = credentials.scope ?? connection.scope ?? null
+    const nextTokenType = credentials.token_type ?? connection.tokenType ?? null
+    const nextExpiryDate =
+        typeof credentials.expiry_date === 'number'
+            ? new Date(credentials.expiry_date)
+            : connection.expiryDate ?? null
+
+    if (!nextRefreshToken) {
+        return
+    }
+
+    const hasChanged =
+        nextAccessToken !== (connection.accessToken ?? null) ||
+        nextRefreshToken !== connection.refreshToken ||
+        nextScope !== (connection.scope ?? null) ||
+        nextTokenType !== (connection.tokenType ?? null) ||
+        nextExpiryDate?.getTime() !== connection.expiryDate?.getTime()
+
+    if (!hasChanged) {
+        return
+    }
+
+    await upsertGoogleCalendarConnection({
+        userId: connection.userId,
+        googleAccountId: connection.googleAccountId,
+        googleEmail: connection.googleEmail,
+        accessToken: nextAccessToken,
+        refreshToken: nextRefreshToken,
+        scope: nextScope,
+        tokenType: nextTokenType,
+        expiryDate: nextExpiryDate,
+    })
+}
+
 export async function createUserGoogleOAuth2Client(userId: string) {
     const connection = await getGoogleCalendarConnection(userId)
 
@@ -97,6 +144,19 @@ export async function createUserGoogleOAuth2Client(userId: string) {
         expiry_date: connection.expiryDate?.getTime(),
     })
 
+    oauth2Client.on('tokens', (tokens) => {
+        void persistOAuthCredentials(connection, {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            scope: tokens.scope,
+            token_type: tokens.token_type,
+            expiry_date: tokens.expiry_date,
+        })
+    })
+
+    await oauth2Client.getAccessToken()
+    await persistOAuthCredentials(connection, oauth2Client.credentials)
+
     return oauth2Client
 }
 
@@ -104,6 +164,50 @@ export async function getGoogleCalendarClient(userId: string) {
     return google.calendar({
         version: 'v3',
         auth: await createUserGoogleOAuth2Client(userId),
+    })
+}
+
+type FetchGoogleCalendarEventsInput = {
+    userId: string
+    timeMin: string
+    timeMax: string
+}
+
+export async function fetchGoogleCalendarEvents(
+    input: FetchGoogleCalendarEventsInput
+) {
+    const calendar = await getGoogleCalendarClient(input.userId)
+    const events = new Map<string, ReturnType<typeof mapGoogleCalendarEvent>>()
+    let pageToken: string | undefined
+
+    do {
+        const response = await calendar.events.list({
+            calendarId: 'primary',
+            timeMin: input.timeMin,
+            timeMax: input.timeMax,
+            maxResults: 2500,
+            singleEvents: true,
+            showDeleted: false,
+            orderBy: 'startTime',
+            pageToken,
+        })
+
+        for (const item of response.data.items ?? []) {
+            const mapped = mapGoogleCalendarEvent(item)
+            if (!mapped.id || !mapped.start) {
+                continue
+            }
+
+            events.set(mapped.id, mapped)
+        }
+
+        pageToken = response.data.nextPageToken ?? undefined
+    } while (pageToken)
+
+    return Array.from(events.values()).sort((a, b) => {
+        const aTime = new Date(a.start ?? 0).getTime()
+        const bTime = new Date(b.start ?? 0).getTime()
+        return aTime - bTime
     })
 }
 

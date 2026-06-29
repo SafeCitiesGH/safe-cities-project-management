@@ -159,6 +159,34 @@ type GoogleCalendarStatus = {
   connectedAt: string | null
 }
 
+function normalizeGoogleCalendarEvents(
+  events: Array<Partial<GoogleCalendarEvent>>
+): GoogleCalendarEvent[] {
+  const deduped = new Map<string, GoogleCalendarEvent>()
+
+  events.forEach((event) => {
+    if (!event.start) {
+      return
+    }
+
+    const id = event.id?.trim() || `${event.start}-${event.title ?? 'event'}`
+
+    deduped.set(id, {
+      id,
+      title: event.title ?? '',
+      description: event.description ?? '',
+      location: event.location ?? '',
+      start: event.start,
+      end: event.end ?? event.start,
+      htmlLink: event.htmlLink,
+    })
+  })
+
+  return Array.from(deduped.values()).sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+  )
+}
+
 function pad(value: number) {
   return String(value).padStart(2, '0')
 }
@@ -301,27 +329,8 @@ function GoogleCalendarPageContent() {
           throw new Error('Failed to load events')
         }
 
-        const data = (await res.json()) as Array<{
-          id?: string
-          title?: string
-          description?: string
-          location?: string
-          start?: string | null
-          end?: string | null
-          htmlLink?: string
-        }>
-
-        const parsed = data
-          .filter((it) => it?.start)
-          .map((it) => ({
-            id: it.id ?? `${Date.now()}-${Math.random()}`,
-            title: it.title ?? '',
-            description: it.description ?? '',
-            location: it.location ?? '',
-            start: it.start ?? '',
-            end: it.end ?? '',
-            htmlLink: it.htmlLink,
-          }))
+        const data = (await res.json()) as Array<Partial<GoogleCalendarEvent>>
+        const parsed = normalizeGoogleCalendarEvents(data)
 
         if (mounted) setEvents(parsed)
       } catch (err) {
@@ -406,9 +415,7 @@ function GoogleCalendarPageContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, description, location, start, end }),
       })
-      const data = (await response.json()) as {
-        id?: string
-        htmlLink?: string
+      const data = (await response.json()) as Partial<GoogleCalendarEvent> & {
         error?: string
       }
 
@@ -416,17 +423,7 @@ function GoogleCalendarPageContent() {
         throw new Error(data.error ?? 'Failed to create event')
       }
 
-      const newEvent: GoogleCalendarEvent = {
-        id: data.id ?? `${Date.now()}`,
-        title,
-        description,
-        location,
-        start,
-        end,
-        htmlLink: data.htmlLink,
-      }
-
-      setEvents((prev) => [...prev, newEvent])
+      setEvents((prev) => normalizeGoogleCalendarEvents([...prev, data]))
       setLastMessage('Event created successfully.')
       toast({ title: 'Google Calendar event created' })
       setIsDialogOpen(false)
