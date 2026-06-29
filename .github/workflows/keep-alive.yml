@@ -58,10 +58,14 @@ jobs:
 
           echo "Pinging Supabase at ${ENDPOINT} ..."
 
+          # Only the apikey header is needed for a keep-alive ping. We do NOT
+          # send "Authorization: Bearer" because Supabase's new publishable
+          # keys (sb_publishable_...) are not JWTs; sending one as a Bearer
+          # token makes the gateway reject it with 401. apikey-only works for
+          # both the new keys and the legacy anon JWT.
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 15 \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
             "${ENDPOINT}")
 
           echo "HTTP response status: $HTTP_STATUS"
