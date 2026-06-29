@@ -331,7 +331,7 @@ export function SheetEditor({
     const isMacOs = useCallback(() => {
         return (
             typeof navigator !== 'undefined' &&
-            navigator.platform.toUpperCase().indexOf('MAC') >= 0
+            navigator.platform.toUpperCase().includes('MAC')
         )
     }, [])
 

@@ -239,7 +239,7 @@ export function getAllDescendantIds(
     nodeId: number
 ): number[] {
     const node = fileTreeCache.findNode(nodeId, tree)
-    if (!node || !node.children?.length) return []
+    if (!node?.children?.length) return []
 
     const descendantIds: number[] = []
 

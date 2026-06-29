@@ -1,6 +1,6 @@
 import { currentUser } from '@clerk/nextjs/server'
 import { google } from 'googleapis'
-import { NextRequest, NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 
 import { getAuthUser } from '~/server/auth'
 import { db } from '~/server/db'

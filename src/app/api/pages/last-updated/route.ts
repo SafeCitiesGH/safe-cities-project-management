@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { db } from '~/server/db'; // adjust path to your db instance
 import { pageContent } from '~/server/db/schema'; // adjust path as needed
 

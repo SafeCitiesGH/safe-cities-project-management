@@ -23,8 +23,8 @@ export interface SheetWithId extends SheetData {
 
 // Helper function to create a new empty sheet
 export function createEmptySheet(
-    rowCount: number = 50,
-    colCount: number = 26
+    rowCount = 50,
+    colCount = 26
 ): SheetData {
     // Create header row with column letters
     const headerRow: Row = {
@@ -72,7 +72,7 @@ export function createEmptySheet(
     const rows = [headerRow, ...dataRows]
 
     // Populate cells array for easier access
-    const cells = rows.map((row) => row.cells as DefaultCellTypes[])
+    const cells = rows.map((row) => row.cells)
 
     return {
         rows,
@@ -202,7 +202,7 @@ export function createSyncedSheetData(
             )
             let value = ''
 
-            if (response && response.value) {
+            if (response?.value) {
                 try {
                     const parsedValue = JSON.parse(response.value)
                     value = Array.isArray(parsedValue)
@@ -227,7 +227,7 @@ export function createSyncedSheetData(
     })
 
     const rows = [alphabeticalHeaderRow, formFieldHeaderRow, ...dataRows]
-    const cells = rows.map((row) => row.cells as DefaultCellTypes[])
+    const cells = rows.map((row) => row.cells)
 
     return { rows, cells }
 }

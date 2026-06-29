@@ -559,7 +559,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentPage && currentPage.content) {
+            if (currentPage?.content) {
                 // Save current content to version history before updating
                 // This will update the timestamp if the same content already exists
                 await saveVersionHistoryWithDeduplication(ctx.db, {
@@ -683,7 +683,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentSheet && currentSheet.content) {
+            if (currentSheet?.content) {
                 // Save current content to version history before updating
                 // This will update the timestamp if the same content already exists
                 await saveVersionHistoryWithDeduplication(ctx.db, {
@@ -1397,7 +1397,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentPage && currentPage.content) {
+            if (currentPage?.content) {
                 // Save current content to version history before restoring
                 await saveVersionHistoryWithDeduplication(ctx.db, {
                     fileId: input.fileId,

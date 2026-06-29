@@ -109,7 +109,30 @@ export const userRouter = createTRPCRouter({
             orderBy: (users, { desc }) => [desc(users.createdAt)],
         })
 
-        return allUsers
+        const client = await clerkClient()
+
+        const usersWithImages = await Promise.all(
+            allUsers.map(async (user) => {
+                try {
+                    const clerkUser = await client.users.getUser(user.id)
+                    return {
+                        ...user,
+                        imageUrl: clerkUser.imageUrl ?? null,
+                    }
+                } catch (error) {
+                    console.error(
+                        `Failed to load Clerk image for user ${user.id}:`,
+                        error
+                    )
+                    return {
+                        ...user,
+                        imageUrl: null,
+                    }
+                }
+            })
+        )
+
+        return usersWithImages
     }),
 
     // Admin-only: changing a user's role is a privilege-escalation surface

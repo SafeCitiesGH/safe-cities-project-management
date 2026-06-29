@@ -25,7 +25,7 @@ export const notificationsRouter = createTRPCRouter({
         .query(async ({ ctx, input = {} }) => {
             const { limit = 50, offset = 0, type, read } = input
 
-            let whereConditions = [eq(notifications.userId, ctx.auth.userId)]
+            const whereConditions = [eq(notifications.userId, ctx.auth.userId)]
 
             if (type) {
                 whereConditions.push(eq(notifications.type, type))
@@ -165,7 +165,7 @@ export const notificationsRouter = createTRPCRouter({
                 .optional()
         )
         .mutation(async ({ ctx, input = {} }) => {
-            let whereConditions = [eq(notifications.userId, ctx.auth.userId)]
+            const whereConditions = [eq(notifications.userId, ctx.auth.userId)]
 
             if (input.type) {
                 whereConditions.push(eq(notifications.type, input.type))
@@ -237,7 +237,7 @@ export const notificationsRouter = createTRPCRouter({
                 .optional()
         )
         .mutation(async ({ ctx, input = {} }) => {
-            let whereConditions = [
+            const whereConditions = [
                 eq(notifications.userId, ctx.auth.userId),
                 eq(notifications.read, true),
             ]

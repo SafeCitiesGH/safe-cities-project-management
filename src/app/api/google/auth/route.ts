@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { NextRequest, NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 
 import { getAuthUser } from '~/server/auth'
 import {
@@ -8,7 +8,7 @@ import {
 } from '~/server/google-calendar'
 
 function getSafeRedirectPath(value: string | null) {
-    if (!value || !value.startsWith('/')) {
+    if (!value?.startsWith('/')) {
         return '/google-calendar'
     }
 
