@@ -174,6 +174,8 @@ export default function SheetPage() {
                 fileId={sheetId}
                 permission={localPermission}
                 savingStatus={savingStatus}
+                fileType="sheet"
+                content={JSON.stringify(sheetDataToUse)}
                 onPermissionChange={handlePermissionChange}
                 onVersionHistoryClick={
                     !isReadOnly ? () => setShowVersionHistory(true) : undefined

@@ -342,6 +342,7 @@ export default function PageView() {
                 fileId={pageId}
                 permission={localPermission}
                 savingStatus={savingStatus}
+                fileType="page"
                 content={content}
                 onVersionHistoryClick={() => setIsVersionHistoryOpen(true)}
             />
