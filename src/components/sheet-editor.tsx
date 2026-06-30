@@ -7,6 +7,7 @@ import {
     type CellLocation,
     type Column,
     type DefaultCellTypes,
+    type Highlight,
     type Id,
     type MenuOption,
     type SelectionMode,
@@ -20,8 +21,14 @@ import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
 import { Card, CardContent } from '~/components/ui/card'
 import { Plus, Activity, Shield, Info, Undo, Redo } from 'lucide-react'
-import { useSupabaseYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
+import { useYjsCollaboration } from '~/hooks/use-yjs-collaboration'
 import * as Y from 'yjs'
+
+function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
+    if (permission === 'edit') return 'editor'
+    if (permission === 'comment') return 'commenter'
+    return 'viewer'
+}
 
 interface SheetEditorProps {
     initialData: SheetData
@@ -53,12 +60,13 @@ export function SheetEditor({
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
     const collaborationEnabled = Boolean(realtimeDocumentId)
-    const collaboration = useSupabaseYjsCollaboration({
+    const collaboration = useYjsCollaboration({
         documentId: realtimeDocumentId,
         enabled: collaborationEnabled,
         permission,
     })
     const {
+        clientId,
         lastError: collaborationLastError,
         markInitialContentLoaded,
         presenceUsers,
@@ -67,11 +75,31 @@ export function SheetEditor({
         updatePresenceMetadata,
         ydoc,
     } = collaboration
+    const currentPresenceColor =
+        presenceUsers.find((presenceUser) => presenceUser.clientId === clientId)
+            ?.color ?? '#7c3aed'
     const sheetMap = React.useMemo(() => ydoc.getMap<string>('sheet'), [ydoc])
     const applyingRemoteChangeRef = useRef(false)
     const sheetLocalOriginRef = useRef(Symbol('sheet-local-update'))
     const sheetRef = useRef<SheetData>(initialData)
     const focusedCellRef = useRef<CellLocation | null>(null)
+    const remoteCellHighlights = React.useMemo<Highlight[]>(
+        () =>
+            presenceUsers
+                .filter(
+                    (presenceUser) =>
+                        presenceUser.clientId !== clientId &&
+                        presenceUser.permission !== 'view' &&
+                        presenceUser.cursor
+                )
+                .map((presenceUser) => ({
+                    rowId: presenceUser.cursor!.rowId,
+                    columnId: presenceUser.cursor!.columnId,
+                    borderColor: presenceUser.color,
+                    className: 'remote-sheet-cell-highlight',
+                })),
+        [clientId, presenceUsers]
+    )
 
     // Rename dialog state
     const [renameState, setRenameState] = useState<{
@@ -106,6 +134,9 @@ export function SheetEditor({
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const lastPersistedSheetJsonRef = useRef<string>(
+        JSON.stringify(initialData)
+    )
 
     // Ref to the outer container div, used for Escape-to-deselect
     const containerRef = useRef<HTMLDivElement>(null)
@@ -114,7 +145,8 @@ export function SheetEditor({
     const formDataColumnCount = syncMetadata?.formDataColumnCount || 0
 
     const updateMutation = api.files.updateSheetContent.useMutation({
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
+            lastPersistedSheetJsonRef.current = variables.content
             onSavingStatusChange?.('saved')
             setTimeout(() => onSavingStatusChange?.('idle'), 2000)
         },
@@ -131,6 +163,9 @@ export function SheetEditor({
     // Debounced save function - 5 seconds of no editing
     const debouncedSave = useCallback(
         (sheetData: SheetData) => {
+            const serializedSheet = JSON.stringify(sheetData)
+            if (serializedSheet === lastPersistedSheetJsonRef.current) return
+
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
@@ -138,7 +173,7 @@ export function SheetEditor({
                 onSavingStatusChange?.('saving')
                 updateMutation.mutate({
                     fileId: sheetId,
-                    content: JSON.stringify(sheetData),
+                    content: serializedSheet,
                 })
             }, 5000)
         },
@@ -198,6 +233,7 @@ export function SheetEditor({
 
                 applyingRemoteChangeRef.current = true
                 setSheet(nextSheet)
+                lastPersistedSheetJsonRef.current = data
                 setHistory((prev) => {
                     const next = [...prev, nextSheet]
                     return next.length > 50 ? next.slice(-50) : next
@@ -291,10 +327,7 @@ export function SheetEditor({
 
     // Helper function to apply cell-level changes to sheet data
     const applyNewValue = useCallback(
-        (
-            changes: CellChange[],
-            prevSheet: SheetData,
-        ): SheetData => {
+        (changes: CellChange[], prevSheet: SheetData): SheetData => {
             const newSheet = { ...prevSheet }
 
             changes.forEach((change) => {
@@ -315,7 +348,8 @@ export function SheetEditor({
 
                 const row = { ...newSheet.rows[rowIndex]! }
                 const newCells = [...(row.cells || [])] as DefaultCellTypes[]
-                newCells[change.columnId as number] = change.newCell as DefaultCellTypes
+                newCells[change.columnId as number] =
+                    change.newCell as DefaultCellTypes
 
                 row.cells = newCells
                 newSheet.rows[rowIndex] = row
@@ -391,7 +425,8 @@ export function SheetEditor({
             }
         }
         document.addEventListener('mousedown', handleOutsideClick)
-        return () => document.removeEventListener('mousedown', handleOutsideClick)
+        return () =>
+            document.removeEventListener('mousedown', handleOutsideClick)
     }, [])
 
     useEffect(() => {
@@ -407,7 +442,10 @@ export function SheetEditor({
         // Deep-copy rows so we don't mutate existing history snapshots
         const newSheet = {
             ...sheet,
-            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+            rows: sheet.rows.map((row) => ({
+                ...row,
+                cells: [...row.cells] as DefaultCellTypes[],
+            })),
         }
         const currentColCount = newSheet.rows[0]?.cells.length || 0
 
@@ -448,7 +486,10 @@ export function SheetEditor({
         // Deep-copy rows so we don't mutate existing history snapshots
         const newSheet = {
             ...sheet,
-            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+            rows: sheet.rows.map((row) => ({
+                ...row,
+                cells: [...row.cells] as DefaultCellTypes[],
+            })),
         }
         const newRowIndex = newSheet.rows.length
         const colCount = newSheet.rows[0]?.cells.length || 0
@@ -591,9 +632,7 @@ export function SheetEditor({
             const nextRows = currentSheet.rows.map((sheetRow, index) => {
                 if (index !== rowIndex) return sheetRow
 
-                const nextCells = [
-                    ...sheetRow.cells,
-                ] as DefaultCellTypes[]
+                const nextCells = [...sheetRow.cells] as DefaultCellTypes[]
                 nextCells[columnId] = {
                     ...cell,
                     text: target.value,
@@ -631,23 +670,32 @@ export function SheetEditor({
             selectedRowIds: Id[],
             selectedColIds: Id[],
             selectionMode: SelectionMode,
-            menuOptions: MenuOption[],
+            menuOptions: MenuOption[]
         ): MenuOption[] => {
             if (readOnly) return menuOptions
 
             const newOptions = [...menuOptions]
             const colIds = selectedColIds as number[]
             const rowIds = selectedRowIds as string[]
-            const protectedRowIds = ['header', 'alphabetical-header', 'form-field-header']
+            const protectedRowIds = [
+                'header',
+                'alphabetical-header',
+                'form-field-header',
+            ]
 
             // Rename Column: column-selection mode, single column, col > 0
-            if (selectionMode === 'column' && colIds.length === 1 && colIds[0]! > 0) {
+            if (
+                selectionMode === 'column' &&
+                colIds.length === 1 &&
+                colIds[0]! > 0
+            ) {
                 const colIndex = colIds[0]!
                 const headerRow =
                     sheet.rows.find((r) => r.rowId === 'header') ??
                     sheet.rows.find((r) => r.rowId === 'alphabetical-header')
                 const currentText =
-                    (headerRow?.cells[colIndex] as { text?: string })?.text ?? ''
+                    (headerRow?.cells[colIndex] as { text?: string })?.text ??
+                    ''
                 newOptions.push({
                     id: 'renameColumn',
                     label: 'Rename Column',
@@ -670,7 +718,8 @@ export function SheetEditor({
             ) {
                 const rowId = rowIds[0]!
                 const row = sheet.rows.find((r) => r.rowId === rowId)
-                const currentText = (row?.cells[0] as { text?: string })?.text ?? ''
+                const currentText =
+                    (row?.cells[0] as { text?: string })?.text ?? ''
                 newOptions.push({
                     id: 'renameRow',
                     label: 'Rename Row',
@@ -690,21 +739,30 @@ export function SheetEditor({
                 const deletableCols = colIds.filter(
                     (colId) =>
                         colId > 0 &&
-                        (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
+                        (!isLiveSyncSheet ||
+                            !isFormDataColumn(colId, formDataColumnCount))
                 )
                 if (deletableCols.length > 0) {
                     newOptions.push({
                         id: 'deleteColumn',
                         label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
                         handler: () => {
-                            const toDelete = [...deletableCols].sort((a, b) => b - a)
+                            const toDelete = [...deletableCols].sort(
+                                (a, b) => b - a
+                            )
                             const newSheet = { ...sheet }
                             newSheet.rows = newSheet.rows.map((row) => {
-                                const newCells = [...row.cells] as DefaultCellTypes[]
-                                toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
+                                const newCells = [
+                                    ...row.cells,
+                                ] as DefaultCellTypes[]
+                                toDelete.forEach((colIdx) =>
+                                    newCells.splice(colIdx, 1)
+                                )
                                 return { ...row, cells: newCells }
                             })
-                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            newSheet.cells = newSheet.rows.map(
+                                (row) => row.cells
+                            )
                             commitChange(newSheet)
                         },
                     })
@@ -726,7 +784,9 @@ export function SheetEditor({
                             newSheet.rows = newSheet.rows.filter(
                                 (row) => !toDelete.has(row.rowId as string)
                             )
-                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            newSheet.cells = newSheet.rows.map(
+                                (row) => row.cells
+                            )
                             commitChange(newSheet)
                         },
                     })
@@ -753,7 +813,15 @@ export function SheetEditor({
         }) || []
 
     return (
-        <div className="flex flex-col h-full" ref={containerRef}>
+        <div
+            className="flex flex-col h-full"
+            ref={containerRef}
+            style={
+                {
+                    '--sheet-current-focus-color': currentPresenceColor,
+                } as React.CSSProperties
+            }
+        >
             {collaborationEnabled && (
                 <div className="flex w-full items-center justify-center border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
                     <div className="flex w-full items-center justify-between gap-3">
@@ -769,31 +837,45 @@ export function SheetEditor({
                         </span>
                         {presenceUsers.length > 0 && (
                             <div className="flex flex-wrap items-center justify-end gap-2">
-                                {presenceUsers.slice(0, 8).map((presenceUser) => (
-                                    <span
-                                        key={presenceUser.clientId}
-                                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1"
-                                    >
+                                {presenceUsers
+                                    .slice(0, 8)
+                                    .map((presenceUser) => (
                                         <span
-                                            className="h-2 w-2 rounded-full"
-                                            style={{
-                                                backgroundColor:
-                                                    presenceUser.color,
-                                            }}
-                                        />
-                                        {presenceUser.name}
-                                        <span className="text-muted-foreground">
-                                            {presenceUser.permission}
-                                            {presenceUser.cursor
-                                                ? ` at ${presenceUser.cursor.label}`
-                                                : ''}
+                                            key={presenceUser.clientId}
+                                            className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1"
+                                        >
+                                            <span
+                                                className="h-2 w-2 rounded-full"
+                                                style={{
+                                                    backgroundColor:
+                                                        presenceUser.color,
+                                                }}
+                                            />
+                                            {presenceUser.name}
+                                            <span className="text-muted-foreground">
+                                                {' '}
+                                                (
+                                                {getPermissionLabel(
+                                                    presenceUser.permission
+                                                )}
+                                                )
+                                            </span>
                                         </span>
-                                    </span>
-                                ))}
+                                    ))}
                             </div>
                         )}
                     </div>
                 </div>
+            )}
+            {collaborationEnabled && (
+                <style jsx>{`
+                    :global(.remote-sheet-cell-highlight) {
+                        pointer-events: none;
+                    }
+                    :global(.rg-cell-focus) {
+                        border-color: var(--sheet-current-focus-color) !important;
+                    }
+                `}</style>
             )}
             {isLiveSyncSheet && (
                 <style jsx>{`
@@ -926,6 +1008,7 @@ export function SheetEditor({
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
                         onContextMenu={readOnly ? undefined : handleContextMenu}
                         onFocusLocationChanged={handleFocusLocationChanged}
+                        highlights={remoteCellHighlights}
                         enableRowSelection={!readOnly}
                         enableColumnSelection={!readOnly}
                     />
@@ -948,10 +1031,13 @@ export function SheetEditor({
                             ref={renameInputRef}
                             type="text"
                             value={renameInputValue}
-                            onChange={(e) => setRenameInputValue(e.target.value)}
+                            onChange={(e) =>
+                                setRenameInputValue(e.target.value)
+                            }
                             className="w-full border rounded px-3 py-1.5 text-sm mb-3 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
                             onKeyDown={(e) => {
-                                if (e.key === 'Enter') applyRename(renameInputValue)
+                                if (e.key === 'Enter')
+                                    applyRename(renameInputValue)
                                 if (e.key === 'Escape') setRenameState(null)
                             }}
                         />

@@ -63,6 +63,32 @@ body {
   scrollbar-color: var(--tt-scrollbar-color) transparent;
 }
 
+.remote-editor-caret {
+  position: absolute;
+  z-index: 5;
+  width: 2px;
+  min-height: 1rem;
+  pointer-events: none;
+  background: var(--remote-caret-color);
+}
+
+.remote-editor-caret span {
+  position: absolute;
+  left: 0;
+  top: -1.35rem;
+  max-width: 10rem;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--remote-caret-color);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.25rem 0.35rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Add styling for the toolbar to ensure it stays fixed */
 [role="toolbar"] {
   position: sticky;

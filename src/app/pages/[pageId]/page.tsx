@@ -87,11 +87,12 @@ export default function PageView() {
 
     // Add mutation hook for updating the page
     const updatePageMutation = api.files.updatePageContent.useMutation({
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
             setSavingStatus('saved')
             // Reset status after a delay
             setTimeout(() => setSavingStatus('idle'), 3 * 1000)
-            setLastSyncedContent(content)
+            setLastSyncedContent(variables.content)
+            lastPersistedContentRef.current = variables.content
         },
         onError: (error) => {
             setSavingStatus('idle')
@@ -105,12 +106,14 @@ export default function PageView() {
 
     // Debounced content update using useRef to store timer
     const contentUpdateTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const lastPersistedContentRef = useRef<string>('')
 
     // Update content when page data loads, but only once
     useEffect(() => {
         if (page?.content?.content && !hasInitialContentLoaded) {
             setContent(page.content.content)
             setLastSyncedContent(page.content.content)
+            lastPersistedContentRef.current = page.content.content
             setHasInitialContentLoaded(true)
         }
         if (page?.content?.updatedAt && !lastSyncedAt) {
@@ -141,6 +144,7 @@ export default function PageView() {
 
             // Only auto-save if user has edit permissions
             if (!userPermission || userPermission === 'view') return
+            if (newContent === lastPersistedContentRef.current) return
 
             // Clear previous timer if exists
             if (contentUpdateTimerRef.current) {
@@ -154,7 +158,7 @@ export default function PageView() {
                     fileId: pageId,
                     content: newContent,
                 })
-            }, 1500) // 1.5 seconds debounce interval (server waits 1.5 seconds after no more keystroke to save)
+            }, 5000)
         },
         [pageId, userPermission, updatePageMutation]
     )

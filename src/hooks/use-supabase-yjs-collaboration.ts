@@ -16,6 +16,10 @@ type PresenceUser = {
     color: string
     permission: Permission
     joinedAt: number
+    selection?: {
+        anchor: number
+        head: number
+    }
     cursor?: {
         rowId: string
         columnId: string | number
@@ -42,10 +46,12 @@ type ClerkSession = NonNullable<ReturnType<typeof useSession>['session']>
 type SupabaseBrowserClient = ReturnType<typeof createClient<any, 'public', any>>
 
 const REMOTE_ORIGIN = Symbol('supabase-realtime-remote')
-const SUBSCRIBE_TIMEOUT_MS = 30_000
-const HEARTBEAT_INTERVAL_MS = 15_000
-const RECONNECT_DELAY_MS = 1_500
+const SUBSCRIBE_TIMEOUT_MS = 10_000
+const HEARTBEAT_INTERVAL_MS = 5_000
+const RECONNECT_DELAY_MS = 500
 const CHANNEL_OPERATION_TIMEOUT_MS = 5_000
+const HEARTBEAT_FAILURES_BEFORE_RECONNECT = 3
+const SEND_FAILURES_BEFORE_RECONNECT = 2
 const USE_PRIVATE_REALTIME = true
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -76,7 +82,9 @@ function decodeJwtDebugClaims(token: string | null): JwtDebugClaims | null {
             .replace(/-/g, '+')
             .replace(/_/g, '/')
             .padEnd(Math.ceil(payload.length / 4) * 4, '=')
-        const claims = JSON.parse(window.atob(normalizedPayload)) as JwtDebugClaims
+        const claims = JSON.parse(
+            window.atob(normalizedPayload)
+        ) as JwtDebugClaims
 
         return {
             sub: claims.sub,
@@ -369,10 +377,21 @@ export function useSupabaseYjsCollaboration({
     const channelRef = React.useRef<ReturnType<
         ReturnType<typeof createClient>['channel']
     > | null>(null)
+    const subscribedChannelsRef = React.useRef<WeakSet<object>>(new WeakSet())
     const presenceMetadataRef = React.useRef<
-        Partial<Pick<PresenceUser, 'cursor'>>
+        Partial<Pick<PresenceUser, 'cursor' | 'selection'>>
     >({})
-    const realtimeSession = USE_PRIVATE_REALTIME ? session : null
+    const sessionRef = React.useRef(session)
+    const userId = user?.id ?? null
+    const userName =
+        user?.fullName || user?.primaryEmailAddress?.emailAddress || 'User'
+    const realtimeSessionKey = USE_PRIVATE_REALTIME
+        ? (session?.id ?? null)
+        : 'public'
+
+    React.useEffect(() => {
+        sessionRef.current = session
+    }, [session])
 
     const supabase = React.useMemo(() => {
         if (!enabled) return null
@@ -382,13 +401,14 @@ export function useSupabaseYjsCollaboration({
         }
 
         if (USE_PRIVATE_REALTIME) {
-            if (!realtimeSession) return null
+            if (!realtimeSessionKey) return null
 
             return createClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
                 {
-                    accessToken: async () => realtimeSession.getToken(),
+                    accessToken: async () =>
+                        (await sessionRef.current?.getToken()) ?? null,
                     auth: {
                         persistSession: false,
                         autoRefreshToken: false,
@@ -411,7 +431,7 @@ export function useSupabaseYjsCollaboration({
                 realtime: { logger },
             }
         )
-    }, [enabled, realtimeSession])
+    }, [enabled, realtimeSessionKey])
 
     React.useEffect(() => {
         const isAuthReady = USE_PRIVATE_REALTIME ? isSessionLoaded : true
@@ -421,7 +441,11 @@ export function useSupabaseYjsCollaboration({
             return
         }
 
-        if (!user || !supabase || (USE_PRIVATE_REALTIME && !session)) {
+        if (
+            !userId ||
+            !supabase ||
+            (USE_PRIVATE_REALTIME && !sessionRef.current)
+        ) {
             setStatus('error')
             return
         }
@@ -440,6 +464,8 @@ export function useSupabaseYjsCollaboration({
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null
         let reconnecting = false
         let reconnectAttempts = 0
+        let heartbeatFailures = 0
+        let sendFailures = 0
         let recoveryCleanup: (() => void) | null = null
         let currentAuthInfo: {
             tokenClaims: JwtDebugClaims | null
@@ -450,12 +476,9 @@ export function useSupabaseYjsCollaboration({
 
         const getPresencePayload = (): PresenceUser => ({
             clientId,
-            userId: user.id,
-            name:
-                user.fullName ||
-                user.primaryEmailAddress?.emailAddress ||
-                'User',
-            color: getStableColor(user.id),
+            userId,
+            name: userName,
+            color: getStableColor(userId),
             permission,
             joinedAt: Date.now(),
             ...presenceMetadataRef.current,
@@ -465,6 +488,13 @@ export function useSupabaseYjsCollaboration({
             sendBroadcast('sync-request', {
                 clientId,
                 stateVector: bytesToBase64(Y.encodeStateVector(ydoc)),
+            })
+        }
+
+        const broadcastFullDocumentState = () => {
+            sendBroadcast('yjs-update', {
+                clientId,
+                update: bytesToBase64(Y.encodeStateAsUpdate(ydoc)),
             })
         }
 
@@ -498,76 +528,76 @@ export function useSupabaseYjsCollaboration({
             activeChannel: ReturnType<typeof supabase.channel>
         ) => {
             activeChannel
-            .on('presence', { event: 'sync' }, updatePresence)
-            .on('presence', { event: 'join' }, updatePresence)
-            .on('presence', { event: 'leave' }, updatePresence)
-            .on(
-                'broadcast',
-                { event: 'yjs-update' },
-                ({ payload }: { payload: BroadcastPayload }) => {
-                    if (
-                        !payload?.update ||
-                        payload.clientId === clientId ||
-                        cancelled
-                    ) {
-                        return
+                .on('presence', { event: 'sync' }, updatePresence)
+                .on('presence', { event: 'join' }, updatePresence)
+                .on('presence', { event: 'leave' }, updatePresence)
+                .on(
+                    'broadcast',
+                    { event: 'yjs-update' },
+                    ({ payload }: { payload: BroadcastPayload }) => {
+                        if (
+                            !payload?.update ||
+                            payload.clientId === clientId ||
+                            cancelled
+                        ) {
+                            return
+                        }
+
+                        hasReceivedRemoteUpdateRef.current = true
+                        Y.applyUpdate(
+                            ydoc,
+                            base64ToBytes(payload.update),
+                            REMOTE_ORIGIN
+                        )
                     }
+                )
+                .on(
+                    'broadcast',
+                    { event: 'sync-request' },
+                    ({ payload }: { payload: BroadcastPayload }) => {
+                        if (
+                            !payload?.stateVector ||
+                            payload.clientId === clientId ||
+                            cancelled
+                        ) {
+                            return
+                        }
 
-                    hasReceivedRemoteUpdateRef.current = true
-                    Y.applyUpdate(
-                        ydoc,
-                        base64ToBytes(payload.update),
-                        REMOTE_ORIGIN
-                    )
-                }
-            )
-            .on(
-                'broadcast',
-                { event: 'sync-request' },
-                ({ payload }: { payload: BroadcastPayload }) => {
-                    if (
-                        !payload?.stateVector ||
-                        payload.clientId === clientId ||
-                        cancelled
-                    ) {
-                        return
+                        const update = Y.encodeStateAsUpdate(
+                            ydoc,
+                            base64ToBytes(payload.stateVector)
+                        )
+
+                        if (update.length === 0) return
+
+                        sendBroadcast('sync-response', {
+                            clientId,
+                            targetClientId: payload.clientId,
+                            update: bytesToBase64(update),
+                        })
                     }
+                )
+                .on(
+                    'broadcast',
+                    { event: 'sync-response' },
+                    ({ payload }: { payload: BroadcastPayload }) => {
+                        if (
+                            !payload?.update ||
+                            payload.targetClientId !== clientId ||
+                            payload.clientId === clientId ||
+                            cancelled
+                        ) {
+                            return
+                        }
 
-                    const update = Y.encodeStateAsUpdate(
-                        ydoc,
-                        base64ToBytes(payload.stateVector)
-                    )
-
-                    if (update.length === 0) return
-
-                    sendBroadcast('sync-response', {
-                        clientId,
-                        targetClientId: payload.clientId,
-                        update: bytesToBase64(update),
-                    })
-                }
-            )
-            .on(
-                'broadcast',
-                { event: 'sync-response' },
-                ({ payload }: { payload: BroadcastPayload }) => {
-                    if (
-                        !payload?.update ||
-                        payload.targetClientId !== clientId ||
-                        payload.clientId === clientId ||
-                        cancelled
-                    ) {
-                        return
+                        hasReceivedRemoteUpdateRef.current = true
+                        Y.applyUpdate(
+                            ydoc,
+                            base64ToBytes(payload.update),
+                            REMOTE_ORIGIN
+                        )
                     }
-
-                    hasReceivedRemoteUpdateRef.current = true
-                    Y.applyUpdate(
-                        ydoc,
-                        base64ToBytes(payload.update),
-                        REMOTE_ORIGIN
-                    )
-                }
-            )
+                )
         }
 
         ydoc.on('update', handleDocumentUpdate)
@@ -591,12 +621,14 @@ export function useSupabaseYjsCollaboration({
 
         const authReady = USE_PRIVATE_REALTIME
             ? (async () => {
-                  if (!session) {
+                  const activeSession = sessionRef.current
+
+                  if (!activeSession) {
                       throw new Error('Missing Clerk session')
                   }
 
                   const { token, claims, source } =
-                      await getSupabaseRealtimeToken(session)
+                      await getSupabaseRealtimeToken(activeSession)
 
                   await supabase.realtime.setAuth(token)
 
@@ -625,10 +657,11 @@ export function useSupabaseYjsCollaboration({
             tokenClaims: JwtDebugClaims | null
             tokenSource: string
         }) => {
-            if (!USE_PRIVATE_REALTIME || !session) return fallbackAuthInfo
+            const activeSession = sessionRef.current
+            if (!USE_PRIVATE_REALTIME || !activeSession) return fallbackAuthInfo
 
             const { token, claims, source } =
-                await getSupabaseRealtimeToken(session)
+                await getSupabaseRealtimeToken(activeSession)
             await supabase.realtime.setAuth(token)
 
             return {
@@ -663,6 +696,53 @@ export function useSupabaseYjsCollaboration({
             }, RECONNECT_DELAY_MS)
         }
 
+        const markChannelHealthy = () => {
+            heartbeatFailures = 0
+            sendFailures = 0
+        }
+
+        const markSendFailure = (
+            reason: string,
+            authInfo: {
+                tokenClaims: JwtDebugClaims | null
+                tokenSource: string
+            }
+        ) => {
+            sendFailures += 1
+            console.warn(
+                `Supabase live editing send missed: ${JSON.stringify({
+                    documentId,
+                    reason,
+                    misses: sendFailures,
+                })}`
+            )
+
+            if (sendFailures >= SEND_FAILURES_BEFORE_RECONNECT) {
+                scheduleReconnect(reason, authInfo)
+            }
+        }
+
+        const markHeartbeatFailure = (
+            reason: string,
+            authInfo: {
+                tokenClaims: JwtDebugClaims | null
+                tokenSource: string
+            }
+        ) => {
+            heartbeatFailures += 1
+            console.warn(
+                `Supabase live editing heartbeat missed: ${JSON.stringify({
+                    documentId,
+                    reason,
+                    misses: heartbeatFailures,
+                })}`
+            )
+
+            if (heartbeatFailures >= HEARTBEAT_FAILURES_BEFORE_RECONNECT) {
+                scheduleReconnect(reason, authInfo)
+            }
+        }
+
         const sendBroadcast = (
             event: 'yjs-update' | 'sync-request' | 'sync-response',
             payload: BroadcastPayload
@@ -682,20 +762,23 @@ export function useSupabaseYjsCollaboration({
                 .then((result) => {
                     if (cancelled || channel !== activeChannel) return
 
-                    if (result !== 'ok') {
-                        if (currentAuthInfo) {
-                            scheduleReconnect(
-                                `send ${event} ${result}`,
-                                currentAuthInfo
-                            )
-                        }
+                    if (result === 'ok') {
+                        markChannelHealthy()
+                        return
+                    }
+
+                    if (currentAuthInfo) {
+                        markSendFailure(
+                            `send ${event} ${result}`,
+                            currentAuthInfo
+                        )
                     }
                 })
                 .catch((error) => {
                     if (cancelled || channel !== activeChannel) return
 
                     if (currentAuthInfo) {
-                        scheduleReconnect(
+                        markSendFailure(
                             `send ${event} ${
                                 error instanceof Error
                                     ? error.message
@@ -727,20 +810,21 @@ export function useSupabaseYjsCollaboration({
                     'timed out'
                 )
                     .then((result) => {
-                        if (
-                            cancelled ||
-                            channel !== activeChannel ||
-                            result === 'ok'
-                        ) {
+                        if (cancelled || channel !== activeChannel) {
                             return
                         }
 
-                        scheduleReconnect(`heartbeat ${result}`, authInfo)
+                        if (result === 'ok') {
+                            markChannelHealthy()
+                            return
+                        }
+
+                        markHeartbeatFailure(`heartbeat ${result}`, authInfo)
                     })
                     .catch((error) => {
                         if (cancelled || channel !== activeChannel) return
 
-                        scheduleReconnect(
+                        markHeartbeatFailure(
                             `heartbeat ${
                                 error instanceof Error
                                     ? error.message
@@ -761,7 +845,6 @@ export function useSupabaseYjsCollaboration({
             reconnecting = true
             reconnectAttempts += 1
             removeActiveChannel()
-            supabase.realtime.disconnect()
 
             if (heartbeatTimer) {
                 clearInterval(heartbeatTimer)
@@ -802,91 +885,124 @@ export function useSupabaseYjsCollaboration({
             channelRef.current = activeChannel
             bindChannelHandlers(activeChannel)
 
-            activeChannel.subscribe(async (subscriptionStatus, error) => {
-                if (cancelled || channel !== activeChannel) return
+            if (subscribedChannelsRef.current.has(activeChannel)) {
+                reconnecting = false
+                scheduleReconnect(
+                    'duplicate subscribe prevented',
+                    activeAuthInfo
+                )
+                return
+            }
 
-                if (subscriptionStatus === 'SUBSCRIBED') {
-                    reconnecting = false
-                    connected = true
-                    setLastError(null)
-                    setStatus('connected')
+            subscribedChannelsRef.current.add(activeChannel)
 
-                    const trackResult = await withTimeout(
-                        activeChannel.track(getPresencePayload()),
-                        CHANNEL_OPERATION_TIMEOUT_MS,
-                        'timed out'
-                    )
+            try {
+                activeChannel.subscribe(async (subscriptionStatus, error) => {
+                    if (cancelled || channel !== activeChannel) return
 
-                    if (trackResult !== 'ok') {
-                        scheduleReconnect(
-                            `initial presence ${trackResult}`,
-                            activeAuthInfo
+                    if (subscriptionStatus === 'SUBSCRIBED') {
+                        reconnecting = false
+                        connected = true
+                        setLastError(null)
+                        setStatus('connected')
+                        markChannelHealthy()
+
+                        const trackResult = await withTimeout(
+                            activeChannel.track(getPresencePayload()),
+                            CHANNEL_OPERATION_TIMEOUT_MS,
+                            'timed out'
                         )
-                        return
-                    }
 
-                    updatePresence()
-                    sendSyncRequest()
-                    startHeartbeat(activeChannel, activeAuthInfo)
-
-                    initialContentTimer = setTimeout(() => {
-                        if (
-                            cancelled ||
-                            channel !== activeChannel ||
-                            hasReceivedRemoteUpdateRef.current ||
-                            hasLoadedInitialContentRef.current ||
-                            !isYDocEmpty(ydoc) ||
-                            !shouldThisClientSeedDocument()
-                        ) {
+                        if (trackResult !== 'ok') {
+                            scheduleReconnect(
+                                `initial presence ${trackResult}`,
+                                activeAuthInfo
+                            )
                             return
                         }
 
-                        setShouldLoadInitialContent(true)
-                    }, 800)
-                }
+                        markChannelHealthy()
+                        updatePresence()
+                        sendSyncRequest()
+                        broadcastFullDocumentState()
+                        startHeartbeat(activeChannel, activeAuthInfo)
 
-                if (
-                    subscriptionStatus === 'CLOSED' ||
-                    subscriptionStatus === 'CHANNEL_ERROR' ||
-                    subscriptionStatus === 'TIMED_OUT' ||
-                    error
-                ) {
-                    reconnecting = false
-                    connected = false
+                        initialContentTimer = setTimeout(() => {
+                            if (
+                                cancelled ||
+                                channel !== activeChannel ||
+                                hasReceivedRemoteUpdateRef.current ||
+                                hasLoadedInitialContentRef.current ||
+                                !isYDocEmpty(ydoc) ||
+                                !shouldThisClientSeedDocument()
+                            ) {
+                                return
+                            }
 
-                    if (heartbeatTimer) {
-                        clearInterval(heartbeatTimer)
-                        heartbeatTimer = null
+                            setShouldLoadInitialContent(true)
+                        }, 800)
                     }
 
-                    const restAuthStatus = USE_PRIVATE_REALTIME
-                        ? await testSupabaseRestAuth(
-                              (await session?.getToken()) ?? null,
-                              user.id
-                          )
-                        : 'rest skipped'
-                    const debugDetails = {
-                        documentId,
-                        status: subscriptionStatus,
-                        error: getRealtimeErrorDebug(error),
-                        tokenClaims: activeAuthInfo.tokenClaims,
-                        tokenSource: activeAuthInfo.tokenSource,
-                        restAuthStatus,
-                    }
+                    if (
+                        subscriptionStatus === 'CLOSED' ||
+                        subscriptionStatus === 'CHANNEL_ERROR' ||
+                        subscriptionStatus === 'TIMED_OUT' ||
+                        error
+                    ) {
+                        reconnecting = false
+                        connected = false
 
-                    console.warn(
-                        `Supabase live editing channel failed: ${JSON.stringify(debugDetails)}`
-                    )
-                    setLastError(
-                        `${subscriptionStatus.toLowerCase()} (${activeAuthInfo.tokenSource}; ${restAuthStatus})`
-                    )
-                    setStatus('error')
-                    scheduleReconnect(
-                        subscriptionStatus.toLowerCase(),
-                        activeAuthInfo
-                    )
-                }
-            }, SUBSCRIBE_TIMEOUT_MS)
+                        if (heartbeatTimer) {
+                            clearInterval(heartbeatTimer)
+                            heartbeatTimer = null
+                        }
+
+                        const restAuthStatus = USE_PRIVATE_REALTIME
+                            ? await testSupabaseRestAuth(
+                                  (await sessionRef.current?.getToken()) ??
+                                      null,
+                                  userId
+                              )
+                            : 'rest skipped'
+                        const debugDetails = {
+                            documentId,
+                            status: subscriptionStatus,
+                            error: getRealtimeErrorDebug(error),
+                            tokenClaims: activeAuthInfo.tokenClaims,
+                            tokenSource: activeAuthInfo.tokenSource,
+                            restAuthStatus,
+                        }
+
+                        console.warn(
+                            `Supabase live editing channel failed: ${JSON.stringify(debugDetails)}`
+                        )
+                        setLastError(
+                            `${subscriptionStatus.toLowerCase()} (${activeAuthInfo.tokenSource}; ${restAuthStatus})`
+                        )
+                        setStatus('error')
+                        scheduleReconnect(
+                            subscriptionStatus.toLowerCase(),
+                            activeAuthInfo
+                        )
+                    }
+                }, SUBSCRIBE_TIMEOUT_MS)
+            } catch (error) {
+                if (cancelled || channel !== activeChannel) return
+
+                reconnecting = false
+                connected = false
+                removeActiveChannel()
+                console.warn(
+                    `Supabase live editing subscribe failed: ${JSON.stringify(
+                        getRealtimeErrorDebug(error)
+                    )}`
+                )
+                setLastError(
+                    error instanceof Error ? error.message : 'subscribe failed'
+                )
+                setStatus('error')
+                scheduleReconnect('subscribe failed', activeAuthInfo)
+            }
         }
 
         void authReady
@@ -911,19 +1027,21 @@ export function useSupabaseYjsCollaboration({
                             if (cancelled) return
 
                             if (result !== 'ok') {
-                                scheduleReconnect(
+                                markHeartbeatFailure(
                                     `browser resumed ${result}`,
                                     authInfo
                                 )
                                 return
                             }
 
+                            markChannelHealthy()
                             sendSyncRequest()
+                            broadcastFullDocumentState()
                         })
                         .catch((error) => {
                             if (cancelled) return
 
-                            scheduleReconnect(
+                            markHeartbeatFailure(
                                 `browser resumed ${
                                     error instanceof Error
                                         ? error.message
@@ -989,9 +1107,9 @@ export function useSupabaseYjsCollaboration({
         enabled,
         isSessionLoaded,
         permission,
-        realtimeSession,
         supabase,
-        user,
+        userId,
+        userName,
         ydoc,
     ])
 
@@ -1001,7 +1119,7 @@ export function useSupabaseYjsCollaboration({
     }, [])
 
     const updatePresenceMetadata = React.useCallback(
-        (metadata: Partial<Pick<PresenceUser, 'cursor'>>) => {
+        (metadata: Partial<Pick<PresenceUser, 'cursor' | 'selection'>>) => {
             presenceMetadataRef.current = {
                 ...presenceMetadataRef.current,
                 ...metadata,
@@ -1012,21 +1130,19 @@ export function useSupabaseYjsCollaboration({
 
             void channel.track({
                 clientId: clientIdRef.current,
-                userId: user?.id ?? '',
-                name:
-                    user?.fullName ||
-                    user?.primaryEmailAddress?.emailAddress ||
-                    'User',
-                color: getStableColor(user?.id ?? clientIdRef.current),
+                userId: userId ?? '',
+                name: userName,
+                color: getStableColor(userId ?? clientIdRef.current),
                 permission,
                 joinedAt: Date.now(),
                 ...presenceMetadataRef.current,
             } satisfies PresenceUser)
         },
-        [permission, user]
+        [permission, userId, userName]
     )
 
     return {
+        clientId: clientIdRef.current,
         ydoc,
         status,
         lastError,
