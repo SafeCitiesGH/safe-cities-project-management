@@ -3,6 +3,8 @@
 import { usePathname } from 'next/navigation'
 import { AppSidebar } from '~/components/app-sidebar'
 import { ChatSidebar } from '~/components/chat-sidebar'
+import { AwaitingApprovalScreen } from '~/components/awaiting-approval-screen'
+import { api } from '~/trpc/react'
 
 interface LayoutWrapperProps {
     children: React.ReactNode
@@ -10,6 +12,13 @@ interface LayoutWrapperProps {
 
 export function LayoutWrapper({ children }: LayoutWrapperProps) {
     const pathname = usePathname()
+
+    // Authoritative approval check: read the role from the DATABASE (not the
+    // login session, which can be stale for deleted/demoted users). If the
+    // signed-in person isn't an approved user/admin, show the approval screen
+    // in place — no redirect, so it can't loop with the middleware gate.
+    const { data: profile, isLoading: isProfileLoading } =
+        api.user.getProfile.useQuery(undefined, { staleTime: 30_000 })
 
     // Routes that should not show the sidebar
     const noSidebarRoutes = ['/onboarding']
@@ -23,6 +32,18 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
                 <main className="w-full">{children}</main>
             </div>
         )
+    }
+
+    // Only gate once the profile has actually loaded, so verified users don't
+    // see a flash. "Not approved" = role is anything other than user/admin
+    // (covers 'unverified' and the deleted-user "not found" case, which returns
+    // no role field). On a query error we fall through to the app, since the
+    // server still enforces every permission.
+    const role =
+        profile && 'role' in profile ? (profile.role ?? undefined) : undefined
+    const isApproved = role === 'user' || role === 'admin'
+    if (!isProfileLoading && profile && !isApproved) {
+        return <AwaitingApprovalScreen />
     }
 
     return (
