@@ -498,6 +498,111 @@ export const filesRouter = createTRPCRouter({
             return { ok }
         }),
 
+    // Lightweight metadata for the password-management UI (Feature 2).
+    // Returns whether the file is protected and whether the caller is allowed
+    // to manage that protection (the file's owner or an admin). Never returns
+    // the hash itself.
+    getPasswordMeta: protectedProcedure
+        .input(z.object({ fileId: z.number() }))
+        .query(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const file = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.fileId),
+                columns: {
+                    id: true,
+                    isPasswordProtected: true,
+                    createdBy: true,
+                },
+            })
+            if (!file) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'File not found',
+                })
+            }
+
+            const isAdmin =
+                (
+                    await ctx.db.query.users.findFirst({
+                        where: eq(users.id, userId),
+                        columns: { role: true },
+                    })
+                )?.role === 'admin'
+
+            return {
+                isPasswordProtected: file.isPasswordProtected ?? false,
+                // Owner or admin may set / change / remove the password.
+                canManage: isAdmin || file.createdBy === userId,
+            }
+        }),
+
+    // Set, change, or remove a file's password (Feature 2 recovery path).
+    // Authorization: the file's owner (createdBy) or an admin. Pass a non-empty
+    // `password` to set/replace it, or `null` to remove protection entirely.
+    // This is the "forgot password" answer: an owner can reset their own file's
+    // password, and admins can reset anyone's.
+    updateFilePassword: protectedProcedure
+        .input(
+            z.object({
+                fileId: z.number(),
+                // null / omitted => remove protection; string (min 4) => set/replace
+                password: z.string().min(4).nullable(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const file = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.fileId),
+                columns: { id: true, createdBy: true },
+            })
+            if (!file) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'File not found',
+                })
+            }
+
+            const isAdmin =
+                (
+                    await ctx.db.query.users.findFirst({
+                        where: eq(users.id, userId),
+                        columns: { role: true },
+                    })
+                )?.role === 'admin'
+
+            if (!isAdmin && file.createdBy !== userId) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message:
+                        'Only the file owner or an administrator can change its password',
+                })
+            }
+
+            const passwordHash = input.password
+                ? await hashFilePassword(input.password)
+                : null
+
+            await ctx.db
+                .update(files)
+                .set({
+                    isPasswordProtected: passwordHash !== null,
+                    passwordHash,
+                    updatedBy: userId,
+                    updatedAt: new Date(),
+                })
+                .where(eq(files.id, file.id))
+
+            // Reset any throttle so the new password can be tried immediately.
+            clearPasswordAttempts(userId, file.id)
+
+            return {
+                success: true,
+                isPasswordProtected: passwordHash !== null,
+            }
+        }),
+
     // Update file metadata (name, parent, order, etc.)
     update: protectedProcedure
         .input(

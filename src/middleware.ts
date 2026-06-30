@@ -23,24 +23,27 @@ export default clerkMiddleware(async (auth, req: NextRequest) => {
         return redirectToSignIn()
     }
 
-    if (
-        !sessionClaims?.metadata?.onboardingComplete &&
-        !isOnboardingRoute(req)
-    ) {
+    // A user is "verified" once an admin has granted them a real role.
+    // Brand-new signups (empty metadata) and anyone demoted back to
+    // 'unverified' are NOT verified and are parked on the review screen at
+    // /onboarding. This keys off the actual role, not a separate
+    // onboardingComplete flag, so the two can't drift apart.
+    const role = sessionClaims?.metadata?.role
+    const isVerified = role === 'user' || role === 'admin'
+
+    if (!isVerified && !isOnboardingRoute(req)) {
         const onboardingUrl = new URL('/onboarding', req.url)
         return NextResponse.redirect(onboardingUrl)
     }
 
-    if (sessionClaims?.metadata?.onboardingComplete && isOnboardingRoute(req)) {
+    if (isVerified && isOnboardingRoute(req)) {
         const homeUrl = new URL('/', req.url)
         return NextResponse.redirect(homeUrl)
     }
 
     // Check admin access for admin-only routes
     if (isAdminRoute(req)) {
-        const userRole =
-            sessionClaims?.metadata?.role || sessionClaims?.publicMetadata?.role
-        if (userRole !== 'admin') {
+        if (role !== 'admin') {
             const dashboardUrl = new URL('/dashboard', req.url)
             return NextResponse.redirect(dashboardUrl)
         }

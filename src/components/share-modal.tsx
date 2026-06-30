@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Search, Trash2, ChevronDown } from 'lucide-react'
+import { X, Search, Trash2, ChevronDown, Lock, Unlock } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '~/components/ui/dialog'
 import { Input } from '~/components/ui/input'
 import { Button } from '~/components/ui/button'
@@ -155,6 +155,47 @@ export function ShareModal({
                 console.error('Error removing permission:', error)
             },
         })
+
+    // --- Password protection management (owner / admin only) ---
+    const [newPassword, setNewPassword] = useState('')
+    const [pwMessage, setPwMessage] = useState<string | null>(null)
+    const { data: passwordMeta, refetch: refetchPasswordMeta } =
+        api.files.getPasswordMeta.useQuery(
+            { fileId },
+            { enabled: isOpen && !!fileId, refetchOnWindowFocus: false }
+        )
+
+    const updatePassword = api.files.updateFilePassword.useMutation({
+        onSuccess: async (res) => {
+            setNewPassword('')
+            setPwMessage(
+                res.isPasswordProtected
+                    ? 'Password updated.'
+                    : 'Password protection removed.'
+            )
+            await Promise.all([
+                refetchPasswordMeta(),
+                utils.files.getFilteredFileTree.invalidate(),
+            ])
+        },
+        onError: (error) => {
+            setPwMessage(error.message || 'Could not update the password.')
+        },
+    })
+
+    const handleSetPassword = () => {
+        if (newPassword.length < 4) {
+            setPwMessage('Password must be at least 4 characters.')
+            return
+        }
+        setPwMessage(null)
+        updatePassword.mutate({ fileId, password: newPassword })
+    }
+
+    const handleRemovePassword = () => {
+        setPwMessage(null)
+        updatePassword.mutate({ fileId, password: null })
+    }
 
     // Filter users based on search query
     const filteredUsers = allUsers.filter(
@@ -557,6 +598,77 @@ export function ShareModal({
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Password protection (owner / admin only) */}
+                    {passwordMeta?.canManage && (
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-medium flex items-center gap-2">
+                                    {passwordMeta.isPasswordProtected ? (
+                                        <Lock className="h-4 w-4" />
+                                    ) : (
+                                        <Unlock className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                    Password protection
+                                </h4>
+                                <div className="h-px flex-1 bg-border" />
+                            </div>
+
+                            <p className="text-xs text-muted-foreground">
+                                {passwordMeta.isPasswordProtected
+                                    ? 'This file is password protected. Set a new password below to replace the current one, or remove protection. There is no way to recover the old password — only replace it.'
+                                    : 'Add a password to require it before non-admins can open this file.'}
+                            </p>
+
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    type="password"
+                                    value={newPassword}
+                                    onChange={(e) => {
+                                        setNewPassword(e.target.value)
+                                        if (pwMessage) setPwMessage(null)
+                                    }}
+                                    placeholder={
+                                        passwordMeta.isPasswordProtected
+                                            ? 'New password'
+                                            : 'Set a password'
+                                    }
+                                    autoComplete="new-password"
+                                    disabled={updatePassword.isPending}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSetPassword()
+                                    }}
+                                />
+                                <Button
+                                    size="sm"
+                                    onClick={handleSetPassword}
+                                    disabled={
+                                        !newPassword || updatePassword.isPending
+                                    }
+                                >
+                                    {passwordMeta.isPasswordProtected
+                                        ? 'Change'
+                                        : 'Set'}
+                                </Button>
+                                {passwordMeta.isPasswordProtected && (
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={handleRemovePassword}
+                                        disabled={updatePassword.isPending}
+                                    >
+                                        Remove
+                                    </Button>
+                                )}
+                            </div>
+
+                            {pwMessage && (
+                                <p className="text-xs text-muted-foreground">
+                                    {pwMessage}
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
