@@ -192,7 +192,11 @@ export function NewFileDialog({
     const handleCreate = async () => {
         // Block submit if password protection is on but invalid
         if (!passwordValid) return
-        const protectionPassword = passwordProtect ? password : undefined
+        // Containers (programmes/folders) are never password protected.
+        const isContainerType =
+            selectedType === 'programme' || selectedType === 'folder'
+        const protectionPassword =
+            passwordProtect && !isContainerType ? password : undefined
 
         if (selectedType === 'upload') {
             if (!selectedFile) return
@@ -511,73 +515,86 @@ export function NewFileDialog({
                         </div>
                     )}
 
-                    {/* Password protection (Feature 2) */}
-                    <div className="grid gap-3 rounded-md border p-3">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <Lock className="h-4 w-4 text-muted-foreground" />
-                                <div>
-                                    <Label htmlFor="password-protect">
-                                        Password protect this file
-                                    </Label>
-                                    <p className="text-xs text-muted-foreground">
-                                        You&apos;ll be asked for this password
-                                        each time the file is opened.
-                                    </p>
+                    {/* Password protection (Feature 2). Only real files can be
+                        password protected — not containers (programmes/folders). */}
+                    {selectedType !== 'programme' &&
+                        selectedType !== 'folder' && (
+                            <div className="grid gap-3 rounded-md border p-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Lock className="h-4 w-4 text-muted-foreground" />
+                                        <div>
+                                            <Label htmlFor="password-protect">
+                                                Password protect this file
+                                            </Label>
+                                            <p className="text-xs text-muted-foreground">
+                                                You&apos;ll be asked for this
+                                                password each time the file is
+                                                opened.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Switch
+                                        id="password-protect"
+                                        checked={passwordProtect}
+                                        onCheckedChange={(checked) => {
+                                            setPasswordProtect(checked)
+                                            if (!checked) {
+                                                setPassword('')
+                                                setConfirmPassword('')
+                                            }
+                                        }}
+                                        disabled={createFileMutation.isPending}
+                                    />
                                 </div>
-                            </div>
-                            <Switch
-                                id="password-protect"
-                                checked={passwordProtect}
-                                onCheckedChange={(checked) => {
-                                    setPasswordProtect(checked)
-                                    if (!checked) {
-                                        setPassword('')
-                                        setConfirmPassword('')
-                                    }
-                                }}
-                                disabled={createFileMutation.isPending}
-                            />
-                        </div>
 
-                        {passwordProtect && (
-                            <div className="grid gap-2">
-                                <Input
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) =>
-                                        setPassword(e.target.value)
-                                    }
-                                    placeholder="Enter password"
-                                    autoComplete="new-password"
-                                    disabled={createFileMutation.isPending}
-                                />
-                                <Input
-                                    type="password"
-                                    value={confirmPassword}
-                                    onChange={(e) =>
-                                        setConfirmPassword(e.target.value)
-                                    }
-                                    placeholder="Confirm password"
-                                    autoComplete="new-password"
-                                    disabled={createFileMutation.isPending}
-                                />
-                                {password.length > 0 &&
-                                    password.length < MIN_PASSWORD_LENGTH && (
-                                        <p className="text-xs text-red-500">
-                                            Password must be at least{' '}
-                                            {MIN_PASSWORD_LENGTH} characters.
-                                        </p>
-                                    )}
-                                {confirmPassword.length > 0 &&
-                                    !passwordsMatch && (
-                                        <p className="text-xs text-red-500">
-                                            Passwords do not match.
-                                        </p>
-                                    )}
+                                {passwordProtect && (
+                                    <div className="grid gap-2">
+                                        <Input
+                                            type="password"
+                                            value={password}
+                                            onChange={(e) =>
+                                                setPassword(e.target.value)
+                                            }
+                                            placeholder="Enter password"
+                                            autoComplete="new-password"
+                                            disabled={
+                                                createFileMutation.isPending
+                                            }
+                                        />
+                                        <Input
+                                            type="password"
+                                            value={confirmPassword}
+                                            onChange={(e) =>
+                                                setConfirmPassword(
+                                                    e.target.value
+                                                )
+                                            }
+                                            placeholder="Confirm password"
+                                            autoComplete="new-password"
+                                            disabled={
+                                                createFileMutation.isPending
+                                            }
+                                        />
+                                        {password.length > 0 &&
+                                            password.length <
+                                                MIN_PASSWORD_LENGTH && (
+                                                <p className="text-xs text-red-500">
+                                                    Password must be at least{' '}
+                                                    {MIN_PASSWORD_LENGTH}{' '}
+                                                    characters.
+                                                </p>
+                                            )}
+                                        {confirmPassword.length > 0 &&
+                                            !passwordsMatch && (
+                                                <p className="text-xs text-red-500">
+                                                    Passwords do not match.
+                                                </p>
+                                            )}
+                                    </div>
+                                )}
                             </div>
                         )}
-                    </div>
                 </div>
                 <DialogFooter>
                     <Button

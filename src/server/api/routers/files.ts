@@ -97,10 +97,15 @@ export const filesRouter = createTRPCRouter({
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
 
-            // Hash the password if password protection was requested
-            const passwordHash = input.password
-                ? await hashFilePassword(input.password)
-                : null
+            // Hash the password if password protection was requested. Containers
+            // (programmes/folders) can never be password protected.
+            const isContainerType =
+                input.type === FILE_TYPES.PROGRAMME ||
+                input.type === FILE_TYPES.FOLDER
+            const passwordHash =
+                input.password && !isContainerType
+                    ? await hashFilePassword(input.password)
+                    : null
 
             // Create the file record
             const [file] = await ctx.db
