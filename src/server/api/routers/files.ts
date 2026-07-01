@@ -622,6 +622,27 @@ export const filesRouter = createTRPCRouter({
             const { id, ...updateData } = input
             const { userId } = ctx.auth
 
+            // Renaming or moving a programme is admin-only (it's an org-wide,
+            // top-level container). Assigned editors can rename files inside it,
+            // but not the programme itself.
+            const target = await ctx.db.query.files.findFirst({
+                where: eq(files.id, id),
+                columns: { type: true },
+            })
+            if (target?.type === FILE_TYPES.PROGRAMME) {
+                const me = await ctx.db.query.users.findFirst({
+                    where: eq(users.id, userId),
+                    columns: { role: true },
+                })
+                if (me?.role !== 'admin') {
+                    throw new TRPCError({
+                        code: 'FORBIDDEN',
+                        message:
+                            'Only an administrator can rename or move a programme',
+                    })
+                }
+            }
+
             const updateValues = {
                 ...updateData,
                 updatedBy: userId,
@@ -891,6 +912,16 @@ export const filesRouter = createTRPCRouter({
                 throw new TRPCError({
                     code: 'NOT_FOUND',
                     message: 'File not found',
+                })
+            }
+
+            // Deleting a programme is admin-only, even for members assigned with
+            // edit access. This prevents an assigned user from wiping an entire
+            // programme.
+            if (file.type === FILE_TYPES.PROGRAMME && !permissionContext.isAdmin) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'Only an administrator can delete a programme',
                 })
             }
 

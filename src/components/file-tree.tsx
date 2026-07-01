@@ -187,7 +187,7 @@ function FileTreeNode({
 
     // Get permissions for this file from the batch query
     const permissions = getPermissions(node.id)
-    const { userPermission, canEdit, canShare } = permissions
+    const { userPermission, canEdit, canShare: canShareRaw } = permissions
 
     // Admin check for programme membership management (Feature 1).
     // getProfile is cached/deduped by react-query, so calling it per node is fine.
@@ -198,8 +198,15 @@ function FileTreeNode({
 
     // Permission checks based on hierarchical permission levels
     const canCreate = canEdit // Edit permission anywhere in hierarchy allows creating files
-    const canRename = canEdit // Edit permission anywhere in hierarchy allows renaming
-    const canDelete = canEdit // Edit permission anywhere in hierarchy allows deleting
+
+    // A programme itself may only be renamed, deleted, or (re)shared by an
+    // admin. Members assigned with edit access can work on the contents, but not
+    // rename/delete/share the whole programme. For every other file type, edit
+    // access is enough.
+    const isProgramme = node.type === 'programme'
+    const canRename = canEdit && (!isProgramme || isAdmin)
+    const canDelete = canEdit && (!isProgramme || isAdmin)
+    const canShare = canShareRaw && (!isProgramme || isAdmin)
 
     // Configure drag source
     const [{ isDragging }, drag] = useDrag(() => ({
