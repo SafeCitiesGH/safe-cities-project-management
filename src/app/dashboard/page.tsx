@@ -149,7 +149,7 @@ export default function DashboardPage() {
 
             <div className="mb-8 grid gap-6 md:grid-cols-7">
                 <div className="md:col-span-4">
-                    <h2 className="text-xl font-semibold mb-4">Programs</h2>
+                    <h2 className="text-xl font-semibold mb-4">Programmes</h2>
                     {isLoadingPrograms ? (
                         <div className="flex items-center justify-center h-32">
                             <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
