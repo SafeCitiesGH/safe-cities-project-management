@@ -15,7 +15,6 @@ import {
     MessageSquare,
     MoreHorizontal,
     PenSquare,
-    Share2,
     Users,
     Download,
     History,
@@ -27,7 +26,6 @@ import {
     Sheet as SheetIcon,
 } from 'lucide-react'
 import { useChatToggle } from '~/hooks/use-chat-toggle'
-import { ShareModal } from '~/components/share-modal'
 import { useSidebar } from './ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
 import { downloadFile } from '~/utils/pdfExport.client'
@@ -92,7 +90,6 @@ export function FileHeader({
     onVersionHistoryClick,
 }: FileHeaderProps) {
     const { toggleChat } = useChatToggle({ pageTitle: filename, fileId })
-    const [isShareModalOpen, setIsShareModalOpen] = useState(false)
     const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(
         null
     )
@@ -300,15 +297,6 @@ export function FileHeader({
                         variant="outline"
                         size="sm"
                         className="gap-2"
-                        onClick={() => setIsShareModalOpen(true)}
-                    >
-                        <Share2 size={16} />
-                        Share
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-2"
                         onClick={toggleChat}
                     >
                         <MessageSquare size={16} />
@@ -379,13 +367,6 @@ export function FileHeader({
                     )}
                 </div>
             </div>
-
-            <ShareModal
-                isOpen={isShareModalOpen}
-                onClose={() => setIsShareModalOpen(false)}
-                filename={filename}
-                fileId={fileId}
-            />
         </>
     )
 }

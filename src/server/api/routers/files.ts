@@ -387,11 +387,13 @@ export const filesRouter = createTRPCRouter({
                 })
             }
 
-            // Password gate (Feature 2). Admins bypass the prompt entirely.
-            // Non-admins must supply the correct password every time, since no
-            // unlock state is cached. The sentinel messages let the client
-            // distinguish "needs password" / "wrong password" from a plain denial.
-            if (file.isPasswordProtected && !permissionContext.isAdmin) {
+            // Password gate (Feature 2). EVERYONE must supply the correct
+            // password to open a protected file — admins included. An admin
+            // (or the file's owner) who doesn't know it can reset it via the
+            // "Forgot password?" flow on the unlock prompt. No unlock state is
+            // cached, so this runs on every open. The sentinel messages let the
+            // client tell "needs password" / "wrong password" from a plain deny.
+            if (file.isPasswordProtected) {
                 if (!input.password) {
                     throw new TRPCError({
                         code: 'UNAUTHORIZED',
@@ -472,16 +474,8 @@ export const filesRouter = createTRPCRouter({
             // Unprotected files are trivially "unlocked"
             if (!file.isPasswordProtected) return { ok: true }
 
-            // Admins bypass the password
-            const isAdmin =
-                (
-                    await ctx.db.query.users.findFirst({
-                        where: eq(users.id, userId),
-                        columns: { role: true },
-                    })
-                )?.role === 'admin'
-            if (isAdmin) return { ok: true }
-
+            // No admin bypass: admins must enter the password too (or reset it
+            // via "Forgot password?").
             const throttle = registerPasswordAttempt(userId, file.id)
             if (!throttle.allowed) {
                 throw new TRPCError({

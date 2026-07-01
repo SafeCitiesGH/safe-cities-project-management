@@ -28,8 +28,10 @@ interface FileUnlockDialogProps {
 }
 
 /**
- * Blocking prompt shown when a non-admin opens a password-protected file.
- * Because no unlock state is cached server-side, this appears on every open.
+ * Blocking prompt shown when anyone (including admins) opens a
+ * password-protected file. No unlock state is cached, so it appears on every
+ * open. The file's owner or an admin can recover a forgotten password here —
+ * either setting a new one or removing protection entirely.
  */
 export function FileUnlockDialog({
     fileId,
@@ -41,6 +43,8 @@ export function FileUnlockDialog({
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
     // Whether the "Forgot password?" recovery panel is showing.
     const [showForgot, setShowForgot] = useState(false)
+    // New password entered in the recovery panel (owner/admin only).
+    const [newPassword, setNewPassword] = useState('')
 
     // Only look up who may reset the password once the user asks to recover it.
     const { data: passwordMeta, isLoading: isMetaLoading } =
@@ -66,15 +70,11 @@ export function FileUnlockDialog({
         },
     })
 
-    // Owner/admin recovery: clears the password so the file opens, then lets
-    // the parent reload it. The user can set a fresh password later via Share.
+    // Owner/admin recovery: set a new password or clear it, then open the file.
     const resetMutation = api.files.updateFilePassword.useMutation({
-        onSuccess: () => {
-            onUnlocked('')
-        },
         onError: (error) => {
             setErrorMessage(
-                error.message || 'Could not reset the password. Please try again.'
+                error.message || 'Could not update the password. Please try again.'
             )
         },
     })
@@ -83,6 +83,30 @@ export function FileUnlockDialog({
         if (!password) return
         setErrorMessage(null)
         verifyMutation.mutate({ fileId, password })
+    }
+
+    const handleSaveNew = async () => {
+        if (newPassword.length < 4) {
+            setErrorMessage('New password must be at least 4 characters.')
+            return
+        }
+        setErrorMessage(null)
+        try {
+            await resetMutation.mutateAsync({ fileId, password: newPassword })
+            onUnlocked(newPassword)
+        } catch {
+            // error surfaced via resetMutation.onError
+        }
+    }
+
+    const handleRemove = async () => {
+        setErrorMessage(null)
+        try {
+            await resetMutation.mutateAsync({ fileId, password: null })
+            onUnlocked('')
+        } catch {
+            // error surfaced via resetMutation.onError
+        }
     }
 
     const isBusy = verifyMutation.isPending || resetMutation.isPending
@@ -170,13 +194,30 @@ export function FileUnlockDialog({
                                     Checking your access…
                                 </p>
                             ) : passwordMeta?.canManage ? (
-                                <p className="text-sm text-muted-foreground">
-                                    You own this file (or you&apos;re an admin),
-                                    so you can reset its password. Resetting
-                                    removes the password and opens the file — you
-                                    can set a new one afterwards from the
-                                    file&apos;s Share menu.
-                                </p>
+                                <>
+                                    <p className="text-sm text-muted-foreground">
+                                        You own this file (or you&apos;re an
+                                        admin), so you can reset its password. Set
+                                        a new one below, or remove protection
+                                        entirely.
+                                    </p>
+                                    <Input
+                                        type="password"
+                                        autoFocus
+                                        value={newPassword}
+                                        onChange={(e) => {
+                                            setNewPassword(e.target.value)
+                                            if (errorMessage)
+                                                setErrorMessage(null)
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveNew()
+                                        }}
+                                        placeholder="New password (min 4 characters)"
+                                        autoComplete="new-password"
+                                        disabled={isBusy}
+                                    />
+                                </>
                             ) : (
                                 <p className="text-sm text-muted-foreground">
                                     Only the person who created this file or an
@@ -191,11 +232,12 @@ export function FileUnlockDialog({
                             )}
                         </div>
 
-                        <DialogFooter>
+                        <DialogFooter className="gap-2 sm:gap-2">
                             <Button
                                 variant="outline"
                                 onClick={() => {
                                     setErrorMessage(null)
+                                    setNewPassword('')
                                     setShowForgot(false)
                                 }}
                                 disabled={isBusy}
@@ -203,20 +245,25 @@ export function FileUnlockDialog({
                                 Back
                             </Button>
                             {passwordMeta?.canManage && (
-                                <Button
-                                    onClick={() => {
-                                        setErrorMessage(null)
-                                        resetMutation.mutate({
-                                            fileId,
-                                            password: null,
-                                        })
-                                    }}
-                                    disabled={isBusy}
-                                >
-                                    {resetMutation.isPending
-                                        ? 'Resetting…'
-                                        : 'Reset & open'}
-                                </Button>
+                                <>
+                                    <Button
+                                        variant="outline"
+                                        onClick={handleRemove}
+                                        disabled={isBusy}
+                                    >
+                                        {resetMutation.isPending && !newPassword
+                                            ? 'Removing…'
+                                            : 'Remove protection'}
+                                    </Button>
+                                    <Button
+                                        onClick={handleSaveNew}
+                                        disabled={!newPassword || isBusy}
+                                    >
+                                        {resetMutation.isPending && newPassword
+                                            ? 'Saving…'
+                                            : 'Save & open'}
+                                    </Button>
+                                </>
                             )}
                         </DialogFooter>
                     </>

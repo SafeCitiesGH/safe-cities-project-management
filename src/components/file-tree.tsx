@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { ChevronRight, Folder, FileText, ChevronDown, MoreHorizontal, Edit2, Trash2, Plus,
-    AlertCircle, ClipboardList, Sheet, Share2, UploadCloud, Lock, Users } from 'lucide-react'
+    AlertCircle, ClipboardList, Sheet, UploadCloud, Lock, Users } from 'lucide-react'
 import { cn } from '~/lib/utils'
 import { DndProvider, useDrag, useDrop } from 'react-dnd'
 import { HTML5Backend } from 'react-dnd-html5-backend'
@@ -13,7 +13,6 @@ import { useToast } from '~/hooks/use-toast'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '~/components/ui/dialog'
 import { api } from '~/trpc/react'
-import { ShareModal } from '~/components/share-modal'
 import { ProgrammeMembersPanel } from '~/components/programme-members-panel'
 import { useBatchPermissions } from '~/hooks/use-batch-permissions'
 import { useRouter } from 'next/navigation'
@@ -173,7 +172,6 @@ function FileTreeNode({
     // Dialog states
     const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false)
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-    const [isShareModalOpen, setIsShareModalOpen] = useState(false)
     const [isMembersPanelOpen, setIsMembersPanelOpen] = useState(false)
     const [renameValue, setRenameValue] = useState(node.filename || node.name || '')
 
@@ -187,7 +185,7 @@ function FileTreeNode({
 
     // Get permissions for this file from the batch query
     const permissions = getPermissions(node.id)
-    const { userPermission, canEdit, canShare: canShareRaw } = permissions
+    const { userPermission, canEdit } = permissions
 
     // Admin check for programme membership management (Feature 1).
     // getProfile is cached/deduped by react-query, so calling it per node is fine.
@@ -206,7 +204,6 @@ function FileTreeNode({
     const isProgramme = node.type === 'programme'
     const canRename = canEdit && (!isProgramme || isAdmin)
     const canDelete = canEdit && (!isProgramme || isAdmin)
-    const canShare = canShareRaw && (!isProgramme || isAdmin)
 
     // Configure drag source
     const [{ isDragging }, drag] = useDrag(() => ({
@@ -527,10 +524,6 @@ function FileTreeNode({
         setIsDeleteDialogOpen(false)
     }
 
-    const handleShare = () => {
-        setIsShareModalOpen(true)
-    }
-
     return (
         <div className="flex flex-col">
             <div
@@ -606,7 +599,7 @@ function FileTreeNode({
                             />
                         )}
                         {/* Only show dropdown if user has any permissions */}
-                        {(canCreate || canShare || canRename || canDelete) && (
+                        {(canCreate || canRename || canDelete) && (
                             <DropdownMenu>
                                 <DropdownMenuTrigger
                                     asChild
@@ -696,18 +689,6 @@ function FileTreeNode({
                                         Manage members
                                     </DropdownMenuItem>
                                 )}
-                                {canShare && (
-                                    <DropdownMenuItem
-                                        onClick={(e) => {
-                                            e.preventDefault()
-                                            e.stopPropagation()
-                                            handleShare()
-                                        }}
-                                    >
-                                        <Share2 size={14} className="mr-2" />{' '}
-                                        Share
-                                    </DropdownMenuItem>
-                                )}
                                 {canRename && (
                                     <DropdownMenuItem
                                         onClick={(e) => {
@@ -770,7 +751,7 @@ function FileTreeNode({
                             />
                         )}
                         {/* Only show dropdown if user has any permissions */}
-                        {(canShare || canRename || canDelete) && (
+                        {(canRename || canDelete) && (
                         <DropdownMenu>
                             <DropdownMenuTrigger
                                 asChild
@@ -785,18 +766,6 @@ function FileTreeNode({
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                                {canShare && (
-                                    <DropdownMenuItem
-                                        onClick={(e) => {
-                                            e.preventDefault()
-                                            e.stopPropagation()
-                                            handleShare()
-                                        }}
-                                    >
-                                        <Share2 size={14} className="mr-2" />{' '}
-                                        Share
-                                    </DropdownMenuItem>
-                                )}
                                 {canRename && (
                                     <DropdownMenuItem
                                         onClick={(e) => {
@@ -1001,14 +970,6 @@ function FileTreeNode({
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-
-            {/* Share Modal */}
-            <ShareModal
-                isOpen={isShareModalOpen}
-                onClose={() => setIsShareModalOpen(false)}
-                filename={node.filename || node.name || ''}
-                fileId={node.id}
-            />
         </div>
     )
 }
