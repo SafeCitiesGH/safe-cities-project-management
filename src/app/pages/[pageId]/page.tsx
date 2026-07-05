@@ -36,11 +36,16 @@ export default function PageView() {
         }
     }, [pageId])
 
+    // When this visit started. Data fetched before this moment is a cached
+    // copy from a PREVIOUS visit and must never seed the editor.
+    const mountedAtRef = useRef(Date.now())
+
     // Fetch page data using tRPC with type validation
     const {
         data: page,
         isLoading,
         isFetching,
+        dataUpdatedAt,
         error,
     } = api.files.getById.useQuery(
         {
@@ -130,30 +135,25 @@ export default function PageView() {
     const savePageRef = useRef(updatePageMutation.mutateAsync)
     savePageRef.current = updatePageMutation.mutateAsync
 
-    // Update content when page data loads, but only once. Wait for the mount
-    // refetch to settle so the editor initializes from fresh data, not cache.
+    // Seed the editor once, and ONLY from data fetched during this visit.
+    // While the pending-save gate holds the query disabled, react-query still
+    // exposes the cached copy from the previous visit with isFetching=false —
+    // seeding from that resurrects pre-edit content, which the next auto-save
+    // then persists (this was the "edits don't save" bug).
     useEffect(() => {
-        if (isFetching) return
-        if (page?.content?.content && !hasInitialContentLoaded) {
-            setContent(page.content.content)
-            setLastSyncedContent(page.content.content)
-            latestContentRef.current = page.content.content
-            setHasInitialContentLoaded(true)
+        if (hasInitialContentLoaded) return
+        if (isFetching || !page) return
+        if (dataUpdatedAt < mountedAtRef.current) return // stale cached copy
+
+        const freshContent = page.content?.content ?? ''
+        setContent(freshContent)
+        setLastSyncedContent(freshContent)
+        latestContentRef.current = freshContent
+        setHasInitialContentLoaded(true)
+        if (page.content?.updatedAt) {
+            setLastSyncedAt(page.content.updatedAt.toISOString())
         }
-        if (page?.content?.updatedAt && !lastSyncedAt) {
-            setLastSyncedAt(
-                page.content.updatedAt
-                    ? page.content.updatedAt.toISOString()
-                    : null
-            )
-        }
-    }, [
-        isFetching,
-        page?.content?.content,
-        page?.content?.updatedAt,
-        hasInitialContentLoaded,
-        lastSyncedAt,
-    ])
+    }, [isFetching, dataUpdatedAt, page, hasInitialContentLoaded])
 
     // Update local permission when user permission loads
     useEffect(() => {
@@ -261,13 +261,13 @@ export default function PageView() {
     // Determine if the editor should be read-only based on permissions
     const isReadOnly = isPermissionLoading || userPermission !== 'edit'
 
-    // Also hold the loading screen while the fresh-on-open refetch settles,
-    // so the editor never initializes from a stale cached copy.
+    // Hold the loading screen until this visit's own fetch has seeded the
+    // editor, so it can never initialize from a stale cached copy.
     if (
         !pendingSaveSettled ||
         isLoading ||
         isPermissionLoading ||
-        (isFetching && !hasInitialContentLoaded && !error)
+        (!hasInitialContentLoaded && !error)
     ) {
         return (
             <div className="container mx-auto p-6">
@@ -402,15 +402,11 @@ export default function PageView() {
                 onVersionHistoryClick={() => setIsVersionHistoryOpen(true)}
             />
 
-            {/* No realtimeDocumentId: documents deliberately run the plain
-                editor. The realtime layer's leader-election seeding could
-                leave the editor empty on fast reopen and then auto-save that
-                emptiness over real content. The DB is the source of truth;
-                cross-user updates arrive via the 5s poll above. */}
             <div className="flex-1 min-h-0 flex flex-col justify-start items-center bg-background">
                 <SimpleEditor
                     initialContent={content}
                     readOnly={isReadOnly}
+                    realtimeDocumentId={pageId}
                     permission={userPermission ?? 'view'}
                     onUpdate={handleContentChange}
                 />

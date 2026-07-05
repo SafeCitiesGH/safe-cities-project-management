@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '~/trpc/react'
 import { SheetEditor } from '~/components/sheet-editor'
@@ -47,11 +47,16 @@ export default function SheetPage() {
         }
     }, [sheetId])
 
+    // When this visit started. Data fetched before this moment is a cached
+    // copy from a PREVIOUS visit and must never seed the editor.
+    const mountedAtRef = useRef(Date.now())
+
     // Fetch sheet from the server using the unified files router with type validation
     const {
         data: sheet,
         isLoading,
         isFetching,
+        dataUpdatedAt,
         error,
     } = api.files.getById.useQuery(
         {
@@ -104,15 +109,16 @@ export default function SheetPage() {
         }
     }, [userPermission])
 
-    // True once the fresh-on-open refetch has settled. The editor only mounts
-    // after this, so it never initializes from a stale cached copy; later
-    // background refetches don't remount it.
+    // True once THIS visit's own fetch has completed. While the pending-save
+    // gate holds the query disabled, react-query still exposes the previous
+    // visit's cached copy with isFetching=false — the dataUpdatedAt check
+    // stops that stale copy from seeding the editor.
     const [hasLoadedFresh, setHasLoadedFresh] = useState(false)
     useEffect(() => {
-        if (!isFetching && sheet) {
+        if (!isFetching && sheet && dataUpdatedAt >= mountedAtRef.current) {
             setHasLoadedFresh(true)
         }
-    }, [isFetching, sheet])
+    }, [isFetching, sheet, dataUpdatedAt])
 
     if (isLoading || (!hasLoadedFresh && !error)) {
         return (
