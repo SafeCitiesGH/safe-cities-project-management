@@ -97,8 +97,8 @@ export function FileHeader({
     const [renamingValue, setRenamingValue] = useState(filename)
     const [displayTitle, setDisplayTitle] = useState(filename)
     const editableRef = useRef<HTMLDivElement>(null)
-    const { state } = useSidebar();
-    const isMobile = useMobile();
+    const { state } = useSidebar()
+    const isMobile = useMobile()
 
     // Update display title when filename prop changes
     useEffect(() => {
@@ -162,15 +162,22 @@ export function FileHeader({
 
     const exportFormats = FILE_TYPE_EXPORT_FORMATS[fileType] ?? []
 
+    // Documents carry the Safe Cities stamp in the top right, same as on screen.
+    const LOGO_HTML =
+        '<p style="text-align: right; margin: 0"><img src="/safe-cities-logo.jpg" alt="Safe Cities" width="80"></p>'
+
     const handleExport = async (format: ExportFormat) => {
         if (!content || exportingFormat) return
+
+        const exportContent =
+            fileType === 'page' ? LOGO_HTML + content : content
 
         setExportingFormat(format)
         try {
             if (format === 'pdf') {
-                await downloadFile(content, `${filename}.pdf`)
+                await downloadFile(exportContent, `${filename}.pdf`)
             } else if (format === 'docx') {
-                await exportHtmlToDocx(content, `${filename}.docx`)
+                await exportHtmlToDocx(exportContent, `${filename}.docx`)
             } else if (format === 'xlsx' || format === 'csv') {
                 await exportSheet(content, `${filename}.${format}`, format)
             }

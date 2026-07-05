@@ -133,8 +133,8 @@ export const filesRouter = createTRPCRouter({
                 })
                 .returning()
 
-            // If it's a page, create the page content. Every new document
-            // starts with the Safe Cities logo in the top right corner.
+            // If it's a page, create the page content. The Safe Cities logo is
+            // stamped on every document by the editor/exports, not stored here.
             if (input.type === FILE_TYPES.PAGE && file) {
                 const safeName = input.name
                     .replace(/&/g, '&amp;')
@@ -142,7 +142,7 @@ export const filesRouter = createTRPCRouter({
                     .replace(/>/g, '&gt;')
                 await ctx.db.insert(pageContent).values({
                     fileId: file.id,
-                    content: `<p style="text-align: right"><img src="/safe-cities-logo.jpg" alt="Safe Cities" width="96"></p><h1>${safeName}</h1>`,
+                    content: `<h1>${safeName}</h1>`,
                     version: 1,
                 })
             }

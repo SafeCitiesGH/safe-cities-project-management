@@ -185,7 +185,9 @@ export default function SheetPage() {
                     !isReadOnly ? () => setShowVersionHistory(true) : undefined
                 }
             />
-            <div className="flex-1">
+            {/* min-h-0 keeps the grid inside the viewport so IT scrolls,
+                which is what makes the sticky header row work */}
+            <div className="flex-1 min-h-0">
                 <SheetEditor
                     initialData={sheetDataToUse}
                     sheetId={sheetId}
