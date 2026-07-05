@@ -313,11 +313,17 @@ export function SimpleEditor({
         }
     }, [editor, onUpdate])
 
-    // Handle initialContent changes from parent
+    // Handle initialContent changes from parent. Never while the editor is
+    // focused — resetting mid-typing would drop keystrokes and the caret.
     React.useEffect(() => {
         if (collaborationEnabled) return
 
-        if (editor && initialContent && editor.getHTML() !== initialContent) {
+        if (
+            editor &&
+            initialContent &&
+            !editor.isFocused &&
+            editor.getHTML() !== initialContent
+        ) {
             editor.commands.setContent(initialContent)
         }
     }, [collaborationEnabled, editor, initialContent])

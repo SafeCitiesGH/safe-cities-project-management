@@ -137,6 +137,7 @@ export default function PageView() {
         if (page?.content?.content && !hasInitialContentLoaded) {
             setContent(page.content.content)
             setLastSyncedContent(page.content.content)
+            latestContentRef.current = page.content.content
             setHasInitialContentLoaded(true)
         }
         if (page?.content?.updatedAt && !lastSyncedAt) {
@@ -164,6 +165,9 @@ export default function PageView() {
     // Handle content change with debounced saving
     const handleContentChange = useCallback(
         (newContent: string) => {
+            // Ignore no-op updates (e.g. the editor re-emitting content we just
+            // loaded into it) so they don't schedule pointless saves.
+            if (newContent === latestContentRef.current) return
             setContent(newContent)
             latestContentRef.current = newContent
 
@@ -227,6 +231,7 @@ export default function PageView() {
                     if (content === lastSyncedContent) {
                         setContent(data.content)
                         setLastSyncedContent(data.content)
+                        latestContentRef.current = data.content
                         setLastSyncedAt(data.lastUpdated)
                     } else {
                         // Optionally, show a non-intrusive toast: "Remote changes detected, please save or reload."
@@ -397,11 +402,15 @@ export default function PageView() {
                 onVersionHistoryClick={() => setIsVersionHistoryOpen(true)}
             />
 
+            {/* No realtimeDocumentId: documents deliberately run the plain
+                editor. The realtime layer's leader-election seeding could
+                leave the editor empty on fast reopen and then auto-save that
+                emptiness over real content. The DB is the source of truth;
+                cross-user updates arrive via the 5s poll above. */}
             <div className="flex-1 min-h-0 flex flex-col justify-start items-center bg-background">
                 <SimpleEditor
                     initialContent={content}
                     readOnly={isReadOnly}
-                    realtimeDocumentId={pageId}
                     permission={userPermission ?? 'view'}
                     onUpdate={handleContentChange}
                 />
