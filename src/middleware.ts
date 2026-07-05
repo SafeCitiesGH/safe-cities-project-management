@@ -4,6 +4,9 @@ import { updateSession } from 'src/components/supabase-utils/middleware'
 
 const isOnboardingRoute = createRouteMatcher(['/onboarding'])
 const isApiRoute = createRouteMatcher(['/api(.*)'])
+// Public form submission links — shareable with people who have no account.
+// The form itself still gates access (published/accepting responses).
+const isPublicFormRoute = createRouteMatcher(['/forms/:id(\\d+)/submit'])
 const isSupabaseRoute = createRouteMatcher([
     '/pages/:id(\\d+)',
     '/sheets/:id(\\d+)',
@@ -12,7 +15,7 @@ const isSupabaseRoute = createRouteMatcher([
 ])
 
 export default clerkMiddleware(async (auth, req: NextRequest) => {
-    if (isApiRoute(req)) {
+    if (isApiRoute(req) || isPublicFormRoute(req)) {
         return NextResponse.next()
     }
 

@@ -336,7 +336,7 @@ export default function PageView() {
     }
 
     return (
-        <div className="h-screen flex flex-col">
+        <div className="h-full flex flex-col">
             <FileHeader
                 filename={page.name || 'Untitled Page'}
                 fileId={pageId}

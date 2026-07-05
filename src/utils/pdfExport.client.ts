@@ -3,7 +3,6 @@
 // Dynamically import html2pdf only on the client side
 let html2pdf: any = null
 
-// Initialize html2pdf only when needed
 async function initHtml2Pdf() {
     if (!html2pdf) {
         const module = await import('html2pdf.js')
@@ -12,64 +11,59 @@ async function initHtml2Pdf() {
     return html2pdf
 }
 
+// A4 portrait printable width with 10mm margins: 190mm ≈ 718px at 96dpi.
+const PAGE_CONTENT_WIDTH_PX = 718
+
 export async function downloadFile(htmlString: string, fileName: string) {
-    try {
-        // Initialize html2pdf
-        const html2pdfInstance = await initHtml2Pdf()
+    const html2pdfInstance = await initHtml2Pdf()
 
-        // Fetch the CSS files
-        const pdfExportCss = await fetch('/styles/pdf-export.css').then((res) =>
-            res.text()
-        )
+    // Scope the stylesheet's global html/body rules to the export container so
+    // they can't restyle the live app while it's attached.
+    const pdfExportCss = await fetch('/styles/pdf-export.css').then((res) =>
+        res
+            .text()
+            .then((css) => css.replace(/html,\s*body/g, '.pdf-export-root'))
+    )
 
-        // Create the HTML structure with inlined styles
-        const htmlWithStyles = `
-        <head>
-          <style>
-            @font-face {
-              font-family: 'DM Sans';
-              font-weight: normal;
-              font-style: normal;
-            }
+    // Render into a real element attached to the document, sized exactly to the
+    // printable width. Converting from a raw HTML string makes html2canvas
+    // guess the layout width, which horizontally clips the output.
+    const container = document.createElement('div')
+    container.className = 'pdf-export-root'
+    container.style.cssText = `position: fixed; left: -10000px; top: 0; width: ${PAGE_CONTENT_WIDTH_PX}px; background: #fff; color: #333;`
+    container.innerHTML = `
+        <style>
             ${pdfExportCss}
-
-            /* Force font overrides for all elements */
-            * {
-              font-family: "DM Sans", sans-serif !important;
-            }
-            
             .prose {
-              font-family: "DM Sans", sans-serif !important;
+                width: 100%;
+                max-width: none;
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                font-family: 'DM Sans', sans-serif;
             }
-            
-          </style>
-        </head>
-          <div class="prose">
-            ${htmlString}
-          </div>
+        </style>
+        <div class="prose">${htmlString}</div>
     `
+    document.body.appendChild(container)
 
-        // Debug: Log the final HTML structure
-        console.log('Final HTML Structure:', htmlWithStyles)
+    const opt = {
+        margin: [10, 10, 10, 10],
+        filename: fileName,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            width: PAGE_CONTENT_WIDTH_PX,
+            windowWidth: PAGE_CONTENT_WIDTH_PX,
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    }
 
-        const opt = {
-            margin: [10, 10, 10, 10],
-            filename: fileName,
-            image: { type: 'jpeg', quality: 0.95 },
-            html2canvas: {
-                scale: 3,
-                useCORS: true,
-                allowTaint: true,
-                logging: true,
-                windowWidth: 794,
-                windowHeight: 1123,
-            },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait'},
-        }
-
-        await html2pdfInstance().set(opt).from(htmlWithStyles).save()
-    } catch (error) {
-        console.error('Error generating PDF:', error)
-        throw error
+    try {
+        await html2pdfInstance().set(opt).from(container).save()
+    } finally {
+        container.remove()
     }
 }

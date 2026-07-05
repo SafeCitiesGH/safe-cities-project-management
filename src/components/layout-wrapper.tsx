@@ -20,11 +20,12 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
     const { data: profile, isLoading: isProfileLoading } =
         api.user.getProfile.useQuery(undefined, { staleTime: 30_000 })
 
-    // Routes that should not show the sidebar
+    // Routes that should not show the sidebar. Public form submission pages
+    // are shared with people outside the workspace, so no app chrome.
     const noSidebarRoutes = ['/onboarding']
-    const shouldHideSidebar = noSidebarRoutes.some((route) =>
-        pathname.startsWith(route)
-    )
+    const shouldHideSidebar =
+        noSidebarRoutes.some((route) => pathname.startsWith(route)) ||
+        /^\/forms\/\d+\/submit/.test(pathname)
 
     if (shouldHideSidebar) {
         return (
@@ -46,11 +47,13 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
         return <AwaitingApprovalScreen />
     }
 
+    // h-screen + internal scrolling: the page scrolls inside <main>, never the
+    // body, so leftover body scroll-locks from closed dialogs can't freeze it.
     return (
-        <div className="app-shell flex min-h-screen w-full">
+        <div className="app-shell flex h-screen w-full overflow-hidden">
             <AppSidebar />
-            <div className="flex flex-1 flex-col overflow-hidden">
-                <main className="flex-1 overflow-auto px-3 pb-4 pt-3 md:px-5 md:pb-5 md:pt-4">
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <main className="flex-1 overflow-y-auto px-3 pb-4 pt-3 md:px-5 md:pb-5 md:pt-4">
                     {children}
                 </main>
             </div>

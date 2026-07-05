@@ -38,6 +38,8 @@ interface SheetEditorProps {
     permission?: 'view' | 'comment' | 'edit'
     onSavingStatusChange?: (status: 'idle' | 'saving' | 'saved') => void
     onShowVersionHistory?: () => void
+    /** Reports every sheet change so the parent can export current data. */
+    onDataChange?: (data: SheetData) => void
 }
 
 export function SheetEditor({
@@ -50,6 +52,7 @@ export function SheetEditor({
     permission = 'view',
     onSavingStatusChange,
     onShowVersionHistory,
+    onDataChange,
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
     const collaborationEnabled = Boolean(realtimeDocumentId)
@@ -102,7 +105,8 @@ export function SheetEditor({
 
     useEffect(() => {
         sheetRef.current = sheet
-    }, [sheet])
+        onDataChange?.(sheet)
+    }, [sheet, onDataChange])
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -291,10 +295,7 @@ export function SheetEditor({
 
     // Helper function to apply cell-level changes to sheet data
     const applyNewValue = useCallback(
-        (
-            changes: CellChange[],
-            prevSheet: SheetData,
-        ): SheetData => {
+        (changes: CellChange[], prevSheet: SheetData): SheetData => {
             const newSheet = { ...prevSheet }
 
             changes.forEach((change) => {
@@ -315,7 +316,8 @@ export function SheetEditor({
 
                 const row = { ...newSheet.rows[rowIndex]! }
                 const newCells = [...(row.cells || [])] as DefaultCellTypes[]
-                newCells[change.columnId as number] = change.newCell as DefaultCellTypes
+                newCells[change.columnId as number] =
+                    change.newCell as DefaultCellTypes
 
                 row.cells = newCells
                 newSheet.rows[rowIndex] = row
@@ -391,7 +393,8 @@ export function SheetEditor({
             }
         }
         document.addEventListener('mousedown', handleOutsideClick)
-        return () => document.removeEventListener('mousedown', handleOutsideClick)
+        return () =>
+            document.removeEventListener('mousedown', handleOutsideClick)
     }, [])
 
     useEffect(() => {
@@ -407,7 +410,10 @@ export function SheetEditor({
         // Deep-copy rows so we don't mutate existing history snapshots
         const newSheet = {
             ...sheet,
-            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+            rows: sheet.rows.map((row) => ({
+                ...row,
+                cells: [...row.cells] as DefaultCellTypes[],
+            })),
         }
         const currentColCount = newSheet.rows[0]?.cells.length || 0
 
@@ -448,7 +454,10 @@ export function SheetEditor({
         // Deep-copy rows so we don't mutate existing history snapshots
         const newSheet = {
             ...sheet,
-            rows: sheet.rows.map(row => ({ ...row, cells: [...row.cells] as DefaultCellTypes[] })),
+            rows: sheet.rows.map((row) => ({
+                ...row,
+                cells: [...row.cells] as DefaultCellTypes[],
+            })),
         }
         const newRowIndex = newSheet.rows.length
         const colCount = newSheet.rows[0]?.cells.length || 0
@@ -591,9 +600,7 @@ export function SheetEditor({
             const nextRows = currentSheet.rows.map((sheetRow, index) => {
                 if (index !== rowIndex) return sheetRow
 
-                const nextCells = [
-                    ...sheetRow.cells,
-                ] as DefaultCellTypes[]
+                const nextCells = [...sheetRow.cells] as DefaultCellTypes[]
                 nextCells[columnId] = {
                     ...cell,
                     text: target.value,
@@ -631,23 +638,33 @@ export function SheetEditor({
             selectedRowIds: Id[],
             selectedColIds: Id[],
             selectionMode: SelectionMode,
-            menuOptions: MenuOption[],
+            menuOptions: MenuOption[]
         ): MenuOption[] => {
             if (readOnly) return menuOptions
 
             const newOptions = [...menuOptions]
             const colIds = selectedColIds as number[]
             const rowIds = selectedRowIds as string[]
-            const protectedRowIds = ['header', 'alphabetical-header', 'form-field-header']
+            const protectedRowIds = [
+                'header',
+                'alphabetical-header',
+                'form-field-header',
+            ]
 
             // Rename Column: column-selection mode, single column, col > 0
-            if (selectionMode === 'column' && colIds.length === 1 && colIds[0]! > 0) {
+            if (
+                selectionMode === 'column' &&
+                colIds.length === 1 &&
+                colIds[0]! > 0
+            ) {
                 const colIndex = colIds[0]!
                 const headerRow =
                     sheet.rows.find((r) => r.rowId === 'header') ??
-                    sheet.rows.find((r) => r.rowId === 'alphabetical-header')
+                    sheet.rows.find((r) => r.rowId === 'alphabetical-header') ??
+                    sheet.rows.find((r) => r.rowId === 'form-field-header')
                 const currentText =
-                    (headerRow?.cells[colIndex] as { text?: string })?.text ?? ''
+                    (headerRow?.cells[colIndex] as { text?: string })?.text ??
+                    ''
                 newOptions.push({
                     id: 'renameColumn',
                     label: 'Rename Column',
@@ -670,7 +687,8 @@ export function SheetEditor({
             ) {
                 const rowId = rowIds[0]!
                 const row = sheet.rows.find((r) => r.rowId === rowId)
-                const currentText = (row?.cells[0] as { text?: string })?.text ?? ''
+                const currentText =
+                    (row?.cells[0] as { text?: string })?.text ?? ''
                 newOptions.push({
                     id: 'renameRow',
                     label: 'Rename Row',
@@ -690,21 +708,30 @@ export function SheetEditor({
                 const deletableCols = colIds.filter(
                     (colId) =>
                         colId > 0 &&
-                        (!isLiveSyncSheet || !isFormDataColumn(colId, formDataColumnCount))
+                        (!isLiveSyncSheet ||
+                            !isFormDataColumn(colId, formDataColumnCount))
                 )
                 if (deletableCols.length > 0) {
                     newOptions.push({
                         id: 'deleteColumn',
                         label: `Delete Column${deletableCols.length > 1 ? 's' : ''}`,
                         handler: () => {
-                            const toDelete = [...deletableCols].sort((a, b) => b - a)
+                            const toDelete = [...deletableCols].sort(
+                                (a, b) => b - a
+                            )
                             const newSheet = { ...sheet }
                             newSheet.rows = newSheet.rows.map((row) => {
-                                const newCells = [...row.cells] as DefaultCellTypes[]
-                                toDelete.forEach((colIdx) => newCells.splice(colIdx, 1))
+                                const newCells = [
+                                    ...row.cells,
+                                ] as DefaultCellTypes[]
+                                toDelete.forEach((colIdx) =>
+                                    newCells.splice(colIdx, 1)
+                                )
                                 return { ...row, cells: newCells }
                             })
-                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            newSheet.cells = newSheet.rows.map(
+                                (row) => row.cells
+                            )
                             commitChange(newSheet)
                         },
                     })
@@ -726,7 +753,9 @@ export function SheetEditor({
                             newSheet.rows = newSheet.rows.filter(
                                 (row) => !toDelete.has(row.rowId as string)
                             )
-                            newSheet.cells = newSheet.rows.map((row) => row.cells)
+                            newSheet.cells = newSheet.rows.map(
+                                (row) => row.cells
+                            )
                             commitChange(newSheet)
                         },
                     })
@@ -737,6 +766,21 @@ export function SheetEditor({
         },
         [readOnly, isLiveSyncSheet, formDataColumnCount, sheet, commitChange]
     )
+
+    // Leading header rows (column letters / form questions) stay pinned while
+    // scrolling, as does the row-number column.
+    const HEADER_ROW_IDS = [
+        'header',
+        'alphabetical-header',
+        'form-field-header',
+    ]
+    let stickyTopRows = 0
+    while (
+        stickyTopRows < sheet.rows.length &&
+        HEADER_ROW_IDS.includes(String(sheet.rows[stickyTopRows]?.rowId))
+    ) {
+        stickyTopRows++
+    }
 
     const columns: Column[] =
         sheet.rows[0]?.cells.map((_, index) => {
@@ -769,27 +813,29 @@ export function SheetEditor({
                         </span>
                         {presenceUsers.length > 0 && (
                             <div className="flex flex-wrap items-center justify-end gap-2">
-                                {presenceUsers.slice(0, 8).map((presenceUser) => (
-                                    <span
-                                        key={presenceUser.clientId}
-                                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1"
-                                    >
+                                {presenceUsers
+                                    .slice(0, 8)
+                                    .map((presenceUser) => (
                                         <span
-                                            className="h-2 w-2 rounded-full"
-                                            style={{
-                                                backgroundColor:
-                                                    presenceUser.color,
-                                            }}
-                                        />
-                                        {presenceUser.name}
-                                        <span className="text-muted-foreground">
-                                            {presenceUser.permission}
-                                            {presenceUser.cursor
-                                                ? ` at ${presenceUser.cursor.label}`
-                                                : ''}
+                                            key={presenceUser.clientId}
+                                            className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1"
+                                        >
+                                            <span
+                                                className="h-2 w-2 rounded-full"
+                                                style={{
+                                                    backgroundColor:
+                                                        presenceUser.color,
+                                                }}
+                                            />
+                                            {presenceUser.name}
+                                            <span className="text-muted-foreground">
+                                                {presenceUser.permission}
+                                                {presenceUser.cursor
+                                                    ? ` at ${presenceUser.cursor.label}`
+                                                    : ''}
+                                            </span>
                                         </span>
-                                    </span>
-                                ))}
+                                    ))}
                             </div>
                         )}
                     </div>
@@ -918,11 +964,13 @@ export function SheetEditor({
             )}
 
             <div className="flex-1 min-h-0 p-4">
-                <div className="rg-container dark:bg-background dark:text-foreground rounded-lg border">
+                <div className="rg-container dark:bg-background dark:text-foreground h-full max-h-full rounded-lg border">
                     <ReactGrid
                         rows={sheet.rows}
                         columns={columns}
                         minRowHeight={35}
+                        stickyTopRows={stickyTopRows}
+                        stickyLeftColumns={1}
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
                         onContextMenu={readOnly ? undefined : handleContextMenu}
                         onFocusLocationChanged={handleFocusLocationChanged}
@@ -948,10 +996,13 @@ export function SheetEditor({
                             ref={renameInputRef}
                             type="text"
                             value={renameInputValue}
-                            onChange={(e) => setRenameInputValue(e.target.value)}
+                            onChange={(e) =>
+                                setRenameInputValue(e.target.value)
+                            }
                             className="w-full border rounded px-3 py-1.5 text-sm mb-3 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
                             onKeyDown={(e) => {
-                                if (e.key === 'Enter') applyRename(renameInputValue)
+                                if (e.key === 'Enter')
+                                    applyRename(renameInputValue)
                                 if (e.key === 'Escape') setRenameState(null)
                             }}
                         />

@@ -22,10 +22,7 @@ export interface SheetWithId extends SheetData {
 }
 
 // Helper function to create a new empty sheet
-export function createEmptySheet(
-    rowCount = 50,
-    colCount = 26
-): SheetData {
+export function createEmptySheet(rowCount = 50, colCount = 26): SheetData {
     // Create header row with column letters
     const headerRow: Row = {
         rowId: 'header',
@@ -148,40 +145,13 @@ export function createSyncedSheetData(
     }>,
     formFields: Array<{ id: number; label: string; type: string }>
 ): SheetData {
-    // Helper function to convert column index to alphabetical letter
-    const getColumnLetter = (index: number): string => {
-        let result = ''
-        while (index > 0) {
-            index-- // Convert to 0-based
-            result = String.fromCharCode(65 + (index % 26)) + result
-            index = Math.floor(index / 26)
-        }
-        return result
-    }
-
-    // Create alphabetical header row (A, B, C, etc.)
-    const alphabeticalHeaders = formFields.map((_, index) =>
-        getColumnLetter(index + 1)
-    )
-
-    const alphabeticalHeaderRow: Row = {
-        rowId: 'alphabetical-header',
-        height: 35,
-        cells: [
-            { type: 'header' as const, text: '' }, // Row header cell
-            ...alphabeticalHeaders.map((letter) => ({
-                type: 'header' as const,
-                text: letter,
-            })),
-        ],
-    }
-
-    // Create form field headers row
+    // The form questions ARE the column headers (single header row, no
+    // alphabetical A/B/C row), so they stay pinned and export as headers.
     const formFieldHeaderRow: Row = {
         rowId: 'form-field-header',
         height: 35,
         cells: [
-            { type: 'header' as const, text: '1' }, // Row number
+            { type: 'header' as const, text: '' }, // Corner cell
             ...formFields.map((field) => ({
                 type: 'header' as const,
                 text: field.label,
@@ -191,8 +161,8 @@ export function createSyncedSheetData(
 
     // Create data rows from submissions
     const dataRows: Row[] = formSubmissions.map((submission, rowIndex) => {
-        const rowCells = [
-            { type: 'header' as const, text: `${rowIndex + 2}` }, // Row number (starting from 2 since row 1 has form headers)
+        const rowCells: DefaultCellTypes[] = [
+            { type: 'header' as const, text: `${rowIndex + 1}` }, // Row number
         ]
 
         // Add response values for each form field
@@ -226,7 +196,7 @@ export function createSyncedSheetData(
         }
     })
 
-    const rows = [alphabeticalHeaderRow, formFieldHeaderRow, ...dataRows]
+    const rows = [formFieldHeaderRow, ...dataRows]
     const cells = rows.map((row) => row.cells)
 
     return { rows, cells }

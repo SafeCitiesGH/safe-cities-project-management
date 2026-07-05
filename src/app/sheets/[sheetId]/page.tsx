@@ -24,6 +24,9 @@ export default function SheetPage() {
     const [currentSheetData, setCurrentSheetData] = useState<SheetData | null>(
         null
     )
+    // Live editor state, so Download exports what's on screen (saves are
+    // debounced, so the fetched content can lag behind edits).
+    const [liveSheetData, setLiveSheetData] = useState<SheetData | null>(null)
 
     // Password supplied via the unlock dialog for protected files (Feature 2)
     const [filePassword, setFilePassword] = useState<string | undefined>(
@@ -146,6 +149,7 @@ export default function SheetPage() {
                 Array.isArray(restoredData.cells)
             ) {
                 setCurrentSheetData(restoredData)
+                setLiveSheetData(restoredData)
                 toast({
                     title: '✅ Version restored',
                     description:
@@ -168,14 +172,14 @@ export default function SheetPage() {
     const sheetDataToUse = currentSheetData || initialData
 
     return (
-        <div className="h-screen flex flex-col">
+        <div className="h-full flex flex-col">
             <FileHeader
                 filename={sheet.name}
                 fileId={sheetId}
                 permission={localPermission}
                 savingStatus={savingStatus}
                 fileType="sheet"
-                content={JSON.stringify(sheetDataToUse)}
+                content={JSON.stringify(liveSheetData ?? sheetDataToUse)}
                 onPermissionChange={handlePermissionChange}
                 onVersionHistoryClick={
                     !isReadOnly ? () => setShowVersionHistory(true) : undefined
@@ -198,6 +202,7 @@ export default function SheetPage() {
                             : undefined
                     }
                     onSavingStatusChange={setSavingStatus}
+                    onDataChange={setLiveSheetData}
                 />
             </div>
 
