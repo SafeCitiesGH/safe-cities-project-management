@@ -8,6 +8,7 @@ import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
 import { FileUnlockDialog } from '~/components/file-unlock-dialog'
 import { createEmptySheet, type SheetData } from '~/lib/sheet-utils'
+import { waitForPendingSave } from '~/lib/pending-saves'
 import { toast } from '~/hooks/use-toast'
 
 type PermissionType = 'view' | 'comment' | 'edit'
@@ -33,6 +34,19 @@ export default function SheetPage() {
         undefined
     )
 
+    // Don't fetch until any in-flight save for this sheet has committed —
+    // otherwise the fetch can win the race and return pre-save content.
+    const [pendingSaveSettled, setPendingSaveSettled] = useState(false)
+    useEffect(() => {
+        let active = true
+        void waitForPendingSave(sheetId).then(() => {
+            if (active) setPendingSaveSettled(true)
+        })
+        return () => {
+            active = false
+        }
+    }, [sheetId])
+
     // Fetch sheet from the server using the unified files router with type validation
     const {
         data: sheet,
@@ -46,7 +60,7 @@ export default function SheetPage() {
             password: filePassword,
         },
         {
-            enabled: !!sheetId,
+            enabled: !!sheetId && pendingSaveSettled,
             // Always load fresh content when opening a sheet — the 30s cached
             // copy can predate edits made just before navigating away.
             staleTime: 0,

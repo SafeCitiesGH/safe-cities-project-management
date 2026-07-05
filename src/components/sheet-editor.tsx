@@ -14,6 +14,7 @@ import {
 import '@silevis/reactgrid/styles.scss'
 import { applyChangesToSheet, type SheetData } from '~/lib/sheet-utils'
 import { isFormDataColumn } from '~/lib/form-sync-utils'
+import { trackPendingSave } from '~/lib/pending-saves'
 import { api } from '~/trpc/react'
 import { toast } from '~/hooks/use-toast'
 import { Button } from '~/components/ui/button'
@@ -133,8 +134,8 @@ export function SheetEditor({
     })
 
     // Stable mutate ref for the unmount flush below
-    const saveSheetRef = useRef(updateMutation.mutate)
-    saveSheetRef.current = updateMutation.mutate
+    const saveSheetRef = useRef(updateMutation.mutateAsync)
+    saveSheetRef.current = updateMutation.mutateAsync
 
     // Debounced save function - 5 seconds of no editing
     const debouncedSave = useCallback(
@@ -142,13 +143,18 @@ export function SheetEditor({
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
+            // Every save is tracked so a quick reopen of this sheet waits for
+            // it instead of racing it and reading stale content.
             saveTimeoutRef.current = setTimeout(() => {
                 saveTimeoutRef.current = null
                 onSavingStatusChange?.('saving')
-                updateMutation.mutate({
-                    fileId: sheetId,
-                    content: JSON.stringify(sheetData),
-                })
+                trackPendingSave(
+                    sheetId,
+                    updateMutation.mutateAsync({
+                        fileId: sheetId,
+                        content: JSON.stringify(sheetData),
+                    })
+                )
             }, 5000)
         },
         [sheetId, updateMutation, onSavingStatusChange]
@@ -409,10 +415,13 @@ export function SheetEditor({
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
                 saveTimeoutRef.current = null
-                saveSheetRef.current({
-                    fileId: sheetId,
-                    content: JSON.stringify(sheetRef.current),
-                })
+                trackPendingSave(
+                    sheetId,
+                    saveSheetRef.current({
+                        fileId: sheetId,
+                        content: JSON.stringify(sheetRef.current),
+                    })
+                )
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps

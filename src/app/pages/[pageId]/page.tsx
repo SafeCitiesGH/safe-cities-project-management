@@ -7,6 +7,7 @@ import { SimpleEditor } from '~/components/tiptap-templates/simple/simple-editor
 import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
 import { FileUnlockDialog } from '~/components/file-unlock-dialog'
+import { trackPendingSave, waitForPendingSave } from '~/lib/pending-saves'
 import { api } from '~/trpc/react'
 
 type Permission = 'view' | 'comment' | 'edit'
@@ -21,6 +22,20 @@ export default function PageView() {
         undefined
     )
 
+    // Don't fetch until any in-flight save for this page has committed —
+    // otherwise the fetch can win the race and return pre-save content, which
+    // then seeds the editor and overwrites the edit on the next auto-save.
+    const [pendingSaveSettled, setPendingSaveSettled] = useState(false)
+    useEffect(() => {
+        let active = true
+        void waitForPendingSave(pageId).then(() => {
+            if (active) setPendingSaveSettled(true)
+        })
+        return () => {
+            active = false
+        }
+    }, [pageId])
+
     // Fetch page data using tRPC with type validation
     const {
         data: page,
@@ -34,7 +49,7 @@ export default function PageView() {
             password: filePassword,
         },
         {
-            enabled: !!pageId,
+            enabled: !!pageId && pendingSaveSettled,
             // Always load fresh content when opening a page — the 30s cached
             // copy can predate edits made just before navigating away.
             staleTime: 0,
@@ -112,8 +127,8 @@ export default function PageView() {
     const contentUpdateTimerRef = useRef<NodeJS.Timeout | null>(null)
     // Latest unsaved content + stable mutate ref, for the unmount flush below
     const latestContentRef = useRef<string>('')
-    const savePageRef = useRef(updatePageMutation.mutate)
-    savePageRef.current = updatePageMutation.mutate
+    const savePageRef = useRef(updatePageMutation.mutateAsync)
+    savePageRef.current = updatePageMutation.mutateAsync
 
     // Update content when page data loads, but only once. Wait for the mount
     // refetch to settle so the editor initializes from fresh data, not cache.
@@ -160,14 +175,18 @@ export default function PageView() {
                 clearTimeout(contentUpdateTimerRef.current)
             }
 
-            // Set new timer for debounced save
+            // Set new timer for debounced save. Every save is tracked so a
+            // quick reopen of this page waits for it instead of racing it.
             contentUpdateTimerRef.current = setTimeout(() => {
                 contentUpdateTimerRef.current = null
                 setSavingStatus('saving')
-                updatePageMutation.mutate({
-                    fileId: pageId,
-                    content: newContent,
-                })
+                trackPendingSave(
+                    pageId,
+                    updatePageMutation.mutateAsync({
+                        fileId: pageId,
+                        content: newContent,
+                    })
+                )
             }, 1500) // 1.5 seconds debounce interval (server waits 1.5 seconds after no more keystroke to save)
         },
         [pageId, userPermission, updatePageMutation]
@@ -180,10 +199,13 @@ export default function PageView() {
             if (contentUpdateTimerRef.current) {
                 clearTimeout(contentUpdateTimerRef.current)
                 contentUpdateTimerRef.current = null
-                savePageRef.current({
-                    fileId: pageId,
-                    content: latestContentRef.current,
-                })
+                trackPendingSave(
+                    pageId,
+                    savePageRef.current({
+                        fileId: pageId,
+                        content: latestContentRef.current,
+                    })
+                )
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,6 +259,7 @@ export default function PageView() {
     // Also hold the loading screen while the fresh-on-open refetch settles,
     // so the editor never initializes from a stale cached copy.
     if (
+        !pendingSaveSettled ||
         isLoading ||
         isPermissionLoading ||
         (isFetching && !hasInitialContentLoaded && !error)
