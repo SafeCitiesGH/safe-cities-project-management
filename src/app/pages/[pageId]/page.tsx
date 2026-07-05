@@ -25,6 +25,7 @@ export default function PageView() {
     const {
         data: page,
         isLoading,
+        isFetching,
         error,
     } = api.files.getById.useQuery(
         {
@@ -34,6 +35,10 @@ export default function PageView() {
         },
         {
             enabled: !!pageId,
+            // Always load fresh content when opening a page — the 30s cached
+            // copy can predate edits made just before navigating away.
+            staleTime: 0,
+            refetchOnMount: 'always',
             retry: (failureCount, error) => {
                 // Don't retry on permission, type, or password errors
                 if (
@@ -105,9 +110,15 @@ export default function PageView() {
 
     // Debounced content update using useRef to store timer
     const contentUpdateTimerRef = useRef<NodeJS.Timeout | null>(null)
+    // Latest unsaved content + stable mutate ref, for the unmount flush below
+    const latestContentRef = useRef<string>('')
+    const savePageRef = useRef(updatePageMutation.mutate)
+    savePageRef.current = updatePageMutation.mutate
 
-    // Update content when page data loads, but only once
+    // Update content when page data loads, but only once. Wait for the mount
+    // refetch to settle so the editor initializes from fresh data, not cache.
     useEffect(() => {
+        if (isFetching) return
         if (page?.content?.content && !hasInitialContentLoaded) {
             setContent(page.content.content)
             setLastSyncedContent(page.content.content)
@@ -121,6 +132,7 @@ export default function PageView() {
             )
         }
     }, [
+        isFetching,
         page?.content?.content,
         page?.content?.updatedAt,
         hasInitialContentLoaded,
@@ -138,6 +150,7 @@ export default function PageView() {
     const handleContentChange = useCallback(
         (newContent: string) => {
             setContent(newContent)
+            latestContentRef.current = newContent
 
             // Only auto-save if user has edit permissions
             if (!userPermission || userPermission === 'view') return
@@ -149,6 +162,7 @@ export default function PageView() {
 
             // Set new timer for debounced save
             contentUpdateTimerRef.current = setTimeout(() => {
+                contentUpdateTimerRef.current = null
                 setSavingStatus('saving')
                 updatePageMutation.mutate({
                     fileId: pageId,
@@ -159,13 +173,20 @@ export default function PageView() {
         [pageId, userPermission, updatePageMutation]
     )
 
-    // Clean up timer on unmount
+    // On unmount, flush any pending debounced save — otherwise edits made in
+    // the last 1.5s are silently lost when navigating away.
     useEffect(() => {
         return () => {
             if (contentUpdateTimerRef.current) {
                 clearTimeout(contentUpdateTimerRef.current)
+                contentUpdateTimerRef.current = null
+                savePageRef.current({
+                    fileId: pageId,
+                    content: latestContentRef.current,
+                })
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // When polling for remote updates:
@@ -213,7 +234,13 @@ export default function PageView() {
     // Determine if the editor should be read-only based on permissions
     const isReadOnly = isPermissionLoading || userPermission !== 'edit'
 
-    if (isLoading || isPermissionLoading) {
+    // Also hold the loading screen while the fresh-on-open refetch settles,
+    // so the editor never initializes from a stale cached copy.
+    if (
+        isLoading ||
+        isPermissionLoading ||
+        (isFetching && !hasInitialContentLoaded && !error)
+    ) {
         return (
             <div className="container mx-auto p-6">
                 <div className="flex items-center justify-center h-[calc(100vh-200px)]">

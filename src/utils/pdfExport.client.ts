@@ -25,12 +25,16 @@ export async function downloadFile(htmlString: string, fileName: string) {
             .then((css) => css.replace(/html,\s*body/g, '.pdf-export-root'))
     )
 
-    // Render into a real element attached to the document, sized exactly to the
-    // printable width. Converting from a raw HTML string makes html2canvas
-    // guess the layout width, which horizontally clips the output.
+    // Render into a real element sized exactly to the printable width, hidden
+    // inside a zero-height wrapper. The wrapper does the hiding because
+    // html2pdf clones the target element WITH its inline styles — off-screen
+    // positioning on the element itself survives the clone and yields a blank
+    // capture, while the (uncloned) parent wrapper hides it safely.
+    const wrapper = document.createElement('div')
+    wrapper.style.cssText = `position: fixed; left: 0; top: 0; width: ${PAGE_CONTENT_WIDTH_PX}px; height: 0; overflow: hidden;`
     const container = document.createElement('div')
     container.className = 'pdf-export-root'
-    container.style.cssText = `position: fixed; left: -10000px; top: 0; width: ${PAGE_CONTENT_WIDTH_PX}px; background: #fff; color: #333;`
+    container.style.cssText = `width: ${PAGE_CONTENT_WIDTH_PX}px; background: #fff; color: #333;`
     container.innerHTML = `
         <style>
             ${pdfExportCss}
@@ -45,7 +49,8 @@ export async function downloadFile(htmlString: string, fileName: string) {
         </style>
         <div class="prose">${htmlString}</div>
     `
-    document.body.appendChild(container)
+    wrapper.appendChild(container)
+    document.body.appendChild(wrapper)
 
     const opt = {
         margin: [10, 10, 10, 10],
@@ -64,6 +69,6 @@ export async function downloadFile(htmlString: string, fileName: string) {
     try {
         await html2pdfInstance().set(opt).from(container).save()
     } finally {
-        container.remove()
+        wrapper.remove()
     }
 }

@@ -428,12 +428,6 @@ export function SimpleEditor({
                     </div>
                 )}
                 <div className="relative flex min-h-0 w-full max-w-4xl flex-1 flex-col my-8 border border-border rounded-lg shadow bg-card p-6">
-                    {/* Safe Cities stamp — pinned to the top right of every document */}
-                    <img
-                        src="/safe-cities-logo.jpg"
-                        alt="Safe Cities"
-                        className="pointer-events-none absolute right-6 top-6 z-10 w-20 select-none"
-                    />
                     <div
                         className="content-wrapper"
                         style={{ cursor: 'text' }}
@@ -449,6 +443,13 @@ export function SimpleEditor({
                             }
                         }}
                     >
+                        {/* Safe Cities stamp — sits on the document itself, so
+                            it scrolls with the content but can't be deleted */}
+                        <img
+                            src="/safe-cities-logo.jpg"
+                            alt="Safe Cities"
+                            className="pointer-events-none absolute right-8 top-8 z-10 w-20 select-none"
+                        />
                         <EditorContent
                             editor={editor}
                             role="presentation"

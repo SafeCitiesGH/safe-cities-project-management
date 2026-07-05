@@ -37,6 +37,7 @@ export default function SheetPage() {
     const {
         data: sheet,
         isLoading,
+        isFetching,
         error,
     } = api.files.getById.useQuery(
         {
@@ -46,6 +47,10 @@ export default function SheetPage() {
         },
         {
             enabled: !!sheetId,
+            // Always load fresh content when opening a sheet — the 30s cached
+            // copy can predate edits made just before navigating away.
+            staleTime: 0,
+            refetchOnMount: 'always',
             retry: (failureCount, error) => {
                 // Don't retry on permission, type, or password errors
                 if (
@@ -85,7 +90,17 @@ export default function SheetPage() {
         }
     }, [userPermission])
 
-    if (isLoading) {
+    // True once the fresh-on-open refetch has settled. The editor only mounts
+    // after this, so it never initializes from a stale cached copy; later
+    // background refetches don't remount it.
+    const [hasLoadedFresh, setHasLoadedFresh] = useState(false)
+    useEffect(() => {
+        if (!isFetching && sheet) {
+            setHasLoadedFresh(true)
+        }
+    }, [isFetching, sheet])
+
+    if (isLoading || (!hasLoadedFresh && !error)) {
         return (
             <div className="container mx-auto p-6">
                 <div className="flex items-center justify-center h-[calc(100vh-200px)]">

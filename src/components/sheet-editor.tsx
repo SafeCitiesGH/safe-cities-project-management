@@ -132,6 +132,10 @@ export function SheetEditor({
         },
     })
 
+    // Stable mutate ref for the unmount flush below
+    const saveSheetRef = useRef(updateMutation.mutate)
+    saveSheetRef.current = updateMutation.mutate
+
     // Debounced save function - 5 seconds of no editing
     const debouncedSave = useCallback(
         (sheetData: SheetData) => {
@@ -139,6 +143,7 @@ export function SheetEditor({
                 clearTimeout(saveTimeoutRef.current)
             }
             saveTimeoutRef.current = setTimeout(() => {
+                saveTimeoutRef.current = null
                 onSavingStatusChange?.('saving')
                 updateMutation.mutate({
                     fileId: sheetId,
@@ -397,12 +402,20 @@ export function SheetEditor({
             document.removeEventListener('mousedown', handleOutsideClick)
     }, [])
 
+    // On unmount, flush any pending debounced save — otherwise edits made in
+    // the last 5s are silently lost when navigating away.
     useEffect(() => {
         return () => {
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
+                saveTimeoutRef.current = null
+                saveSheetRef.current({
+                    fileId: sheetId,
+                    content: JSON.stringify(sheetRef.current),
+                })
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // Add a new column
