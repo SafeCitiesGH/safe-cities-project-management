@@ -253,46 +253,23 @@ function testBrowserRealtimeSocket() {
 }
 
 async function getSupabaseRealtimeToken(session: ClerkSession) {
-    const defaultToken = await session.getToken({ skipCache: true })
-    const defaultClaims = decodeJwtDebugClaims(defaultToken)
-
-    try {
-        const templateToken = await session.getToken({
-            template: 'supabase',
-            skipCache: true,
-        })
-        const templateClaims = decodeJwtDebugClaims(templateToken)
-
-        if (templateToken) {
-            return {
-                token: templateToken,
-                claims: templateClaims,
-                source: 'supabase-template',
-            }
-        }
-    } catch (error) {
-        console.warn(
-            `Supabase live editing token template unavailable: ${JSON.stringify(
-                getRealtimeErrorDebug(error)
-            )}`
-        )
-    }
-
-    if (defaultToken) {
-        return {
-            token: defaultToken,
-            claims: defaultClaims,
-            source:
-                defaultClaims?.role === 'authenticated'
-                    ? 'default'
-                    : 'default-missing-authenticated-role',
-        }
-    }
+    // With Supabase Third-Party Auth for Clerk enabled, the standard Clerk
+    // session token already carries `role: "authenticated"`, which is what
+    // Supabase Realtime needs to authorize a private channel. No JWT template
+    // is required (the legacy template approach was deprecated in April 2025).
+    // The `source` label is kept for debugging: if it ever reports
+    // `missing-authenticated-role`, the Clerk↔Supabase integration isn't active.
+    const token = await session.getToken({ skipCache: true })
+    const claims = decodeJwtDebugClaims(token)
 
     return {
-        token: defaultToken,
-        claims: defaultClaims,
-        source: 'missing-token',
+        token,
+        claims,
+        source: token
+            ? claims?.role === 'authenticated'
+                ? 'clerk-session'
+                : 'clerk-session-missing-authenticated-role'
+            : 'missing-token',
     }
 }
 

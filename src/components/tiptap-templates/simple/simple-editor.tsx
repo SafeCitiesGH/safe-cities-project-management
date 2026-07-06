@@ -69,7 +69,7 @@ import { LinkIcon } from '@/components/tiptap-icons/link-icon'
 import { useMobile } from '~/hooks/use-mobile'
 import { useWindowSize } from '~/hooks/use-window-size'
 import { useCursorVisibility } from '~/hooks/use-cursor-visibility'
-import { useYjsCollaboration } from '~/hooks/use-yjs-collaboration'
+import { useSupabaseYjsCollaboration as useYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
 
 // --- Components ---
 import { ThemeToggle } from '~/components/tiptap-templates/simple/theme-toggle'

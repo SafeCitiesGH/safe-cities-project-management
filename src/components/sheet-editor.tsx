@@ -22,7 +22,7 @@ import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
 import { Card, CardContent } from '~/components/ui/card'
 import { Plus, Activity, Shield, Info, Undo, Redo } from 'lucide-react'
-import { useYjsCollaboration } from '~/hooks/use-yjs-collaboration'
+import { useSupabaseYjsCollaboration as useYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
 import * as Y from 'yjs'
 
 function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
