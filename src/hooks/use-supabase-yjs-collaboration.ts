@@ -54,6 +54,15 @@ const HEARTBEAT_FAILURES_BEFORE_RECONNECT = 3
 const SEND_FAILURES_BEFORE_RECONNECT = 2
 const USE_PRIVATE_REALTIME = true
 
+// NEXT_PUBLIC_SUPABASE_URL is sometimes configured with a trailing `/rest/v1`
+// (the PostgREST base). supabase-js needs the bare project URL — otherwise the
+// realtime socket URL becomes `.../rest/v1/realtime/v1/websocket` and can never
+// connect (you get "connecting" forever). Strip it so the value can't be
+// misconfigured, mirroring what the keep-alive workflow already does.
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '')
+    .replace(/\/rest\/v1\/?$/, '')
+    .replace(/\/+$/, '')
+
 function bytesToBase64(bytes: Uint8Array) {
     let binary = ''
     for (let index = 0; index < bytes.length; index += 1) {
@@ -381,7 +390,7 @@ export function useSupabaseYjsCollaboration({
             if (!realtimeSessionKey) return null
 
             return createClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                SUPABASE_URL,
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
                 {
                     accessToken: async () =>
@@ -397,7 +406,7 @@ export function useSupabaseYjsCollaboration({
         }
 
         return createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            SUPABASE_URL,
             process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
             {
                 auth: {
