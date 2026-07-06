@@ -112,11 +112,12 @@ export default function PageView() {
 
     // Add mutation hook for updating the page
     const updatePageMutation = api.files.updatePageContent.useMutation({
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
             setSavingStatus('saved')
             // Reset status after a delay
             setTimeout(() => setSavingStatus('idle'), 3 * 1000)
-            setLastSyncedContent(content)
+            setLastSyncedContent(variables.content)
+            lastPersistedContentRef.current = variables.content
         },
         onError: (error) => {
             setSavingStatus('idle')
@@ -130,6 +131,7 @@ export default function PageView() {
 
     // Debounced content update using useRef to store timer
     const contentUpdateTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const lastPersistedContentRef = useRef<string>('')
     // Latest unsaved content + stable mutate ref, for the unmount flush below
     const latestContentRef = useRef<string>('')
     const savePageRef = useRef(updatePageMutation.mutateAsync)
@@ -149,6 +151,7 @@ export default function PageView() {
         setContent(freshContent)
         setLastSyncedContent(freshContent)
         latestContentRef.current = freshContent
+        lastPersistedContentRef.current = freshContent
         setHasInitialContentLoaded(true)
         if (page.content?.updatedAt) {
             setLastSyncedAt(page.content.updatedAt.toISOString())
@@ -173,6 +176,7 @@ export default function PageView() {
 
             // Only auto-save if user has edit permissions
             if (!userPermission || userPermission === 'view') return
+            if (newContent === lastPersistedContentRef.current) return
 
             // Clear previous timer if exists
             if (contentUpdateTimerRef.current) {

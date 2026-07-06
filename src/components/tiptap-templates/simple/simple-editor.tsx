@@ -5,7 +5,7 @@ import { EditorContent, EditorContext, useEditor } from '@tiptap/react'
 
 // --- Tiptap Core Extensions ---
 import { StarterKit } from '@tiptap/starter-kit'
-import { Collaboration } from '@tiptap/extension-collaboration'
+import { Collaboration, isChangeOrigin } from '@tiptap/extension-collaboration'
 import { TaskList } from '@tiptap/extension-task-list'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { Typography } from '@tiptap/extension-typography'
@@ -69,7 +69,7 @@ import { LinkIcon } from '@/components/tiptap-icons/link-icon'
 import { useMobile } from '~/hooks/use-mobile'
 import { useWindowSize } from '~/hooks/use-window-size'
 import { useCursorVisibility } from '~/hooks/use-cursor-visibility'
-import { useSupabaseYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
+import { useYjsCollaboration } from '~/hooks/use-yjs-collaboration'
 
 // --- Components ---
 import { ThemeToggle } from '~/components/tiptap-templates/simple/theme-toggle'
@@ -195,6 +195,22 @@ const MobileToolbarContent = ({
     </>
 )
 
+type RemoteCaret = {
+    clientId: string
+    name: string
+    permission: 'view' | 'comment' | 'edit'
+    color: string
+    left: number
+    top: number
+    height: number
+}
+
+function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
+    if (permission === 'edit') return 'editor'
+    if (permission === 'comment') return 'commenter'
+    return 'viewer'
+}
+
 interface SimpleEditorProps {
     initialContent?: string
     readOnly?: boolean
@@ -216,18 +232,22 @@ export function SimpleEditor({
         'main' | 'highlighter' | 'link'
     >('main')
     const toolbarRef = React.useRef<HTMLDivElement>(null)
+    const contentWrapperRef = React.useRef<HTMLDivElement>(null)
+    const [remoteCarets, setRemoteCarets] = React.useState<RemoteCaret[]>([])
     const collaborationEnabled = Boolean(realtimeDocumentId)
-    const collaboration = useSupabaseYjsCollaboration({
+    const collaboration = useYjsCollaboration({
         documentId: realtimeDocumentId,
         enabled: collaborationEnabled,
         permission,
     })
     const {
+        clientId,
         lastError: collaborationLastError,
         markInitialContentLoaded,
         presenceUsers,
         shouldLoadInitialContent,
         status: collaborationStatus,
+        updatePresenceMetadata,
         ydoc,
     } = collaboration
 
@@ -297,11 +317,110 @@ export function SimpleEditor({
         overlayHeight: toolbarRef.current?.getBoundingClientRect().height ?? 0,
     })
 
+    React.useEffect(() => {
+        if (!collaborationEnabled || !editor || readOnly) return
+
+        const publishSelection = () => {
+            const { anchor, head } = editor.state.selection
+            updatePresenceMetadata({
+                selection: {
+                    anchor,
+                    head,
+                },
+            })
+        }
+
+        publishSelection()
+        editor.on('selectionUpdate', publishSelection)
+        editor.on('focus', publishSelection)
+
+        return () => {
+            editor.off('selectionUpdate', publishSelection)
+            editor.off('focus', publishSelection)
+        }
+    }, [collaborationEnabled, editor, readOnly, updatePresenceMetadata])
+
+    React.useEffect(() => {
+        if (!collaborationEnabled || !editor) {
+            setRemoteCarets([])
+            return
+        }
+
+        const updateRemoteCarets = () => {
+            const wrapper = contentWrapperRef.current
+            if (!wrapper) return
+
+            const wrapperRect = wrapper.getBoundingClientRect()
+            const docSize = editor.state.doc.content.size
+            const nextCarets = presenceUsers
+                .filter(
+                    (presenceUser) =>
+                        presenceUser.clientId !== clientId &&
+                        presenceUser.permission !== 'view' &&
+                        presenceUser.selection
+                )
+                .flatMap((presenceUser) => {
+                    try {
+                        const selectionHead = Math.max(
+                            0,
+                            Math.min(
+                                presenceUser.selection?.head ?? 0,
+                                docSize
+                            )
+                        )
+                        const coords = editor.view.coordsAtPos(selectionHead)
+
+                        return [
+                            {
+                                clientId: presenceUser.clientId,
+                                name: presenceUser.name,
+                                permission: presenceUser.permission,
+                                color: presenceUser.color,
+                                left:
+                                    coords.left -
+                                    wrapperRect.left +
+                                    wrapper.scrollLeft,
+                                top:
+                                    coords.top -
+                                    wrapperRect.top +
+                                    wrapper.scrollTop,
+                                height: Math.max(
+                                    16,
+                                    coords.bottom - coords.top
+                                ),
+                            },
+                        ]
+                    } catch {
+                        return []
+                    }
+                })
+
+            setRemoteCarets(nextCarets)
+        }
+
+        updateRemoteCarets()
+
+        const wrapper = contentWrapperRef.current
+        wrapper?.addEventListener('scroll', updateRemoteCarets)
+        window.addEventListener('resize', updateRemoteCarets)
+
+        return () => {
+            wrapper?.removeEventListener('scroll', updateRemoteCarets)
+            window.removeEventListener('resize', updateRemoteCarets)
+        }
+    }, [clientId, collaborationEnabled, editor, presenceUsers])
+
     // Add effect to handle content updates
     React.useEffect(() => {
         if (!editor || !onUpdate) return
 
-        const handleUpdate = () => {
+        const handleUpdate = ({
+            transaction,
+        }: {
+            transaction: Parameters<typeof isChangeOrigin>[0]
+        }) => {
+            if (collaborationEnabled && isChangeOrigin(transaction)) return
+
             const htmlContent = editor.getHTML()
             onUpdate(htmlContent)
         }
@@ -311,7 +430,7 @@ export function SimpleEditor({
         return () => {
             editor.off('update', handleUpdate)
         }
-    }, [editor, onUpdate])
+    }, [collaborationEnabled, editor, onUpdate])
 
     // Handle initialContent changes from parent. Never while the editor is
     // focused — resetting mid-typing would drop keystrokes and the caret.
@@ -420,12 +539,17 @@ export function SimpleEditor({
                                             >
                                                 <span
                                                     className="h-2 w-2 rounded-full"
-                                                    style={{
-                                                        backgroundColor:
-                                                            presenceUser.color,
-                                                    }}
-                                                />
-                                                {presenceUser.name}
+                                                style={{
+                                                    backgroundColor:
+                                                        presenceUser.color,
+                                                }}
+                                            />
+                                                {presenceUser.name}{' '}
+                                                (
+                                                {getPermissionLabel(
+                                                    presenceUser.permission
+                                                )}
+                                                )
                                             </span>
                                         ))}
                                 </div>
@@ -435,6 +559,7 @@ export function SimpleEditor({
                 )}
                 <div className="relative flex min-h-0 w-full max-w-4xl flex-1 flex-col my-8 border border-border rounded-lg shadow bg-card p-6">
                     <div
+                        ref={contentWrapperRef}
                         className="content-wrapper"
                         style={{ cursor: 'text' }}
                         onMouseDown={(e) => {
@@ -449,6 +574,29 @@ export function SimpleEditor({
                             }
                         }}
                     >
+                        {remoteCarets.map((remoteCaret) => (
+                            <div
+                                key={remoteCaret.clientId}
+                                className="remote-editor-caret"
+                                style={
+                                    {
+                                        '--remote-caret-color':
+                                            remoteCaret.color,
+                                        height: remoteCaret.height,
+                                        left: remoteCaret.left,
+                                        top: remoteCaret.top,
+                                    } as React.CSSProperties
+                                }
+                                >
+                                <span>
+                                    {remoteCaret.name} (
+                                    {getPermissionLabel(
+                                        remoteCaret.permission
+                                    )}
+                                    )
+                                </span>
+                            </div>
+                        ))}
                         {/* Safe Cities stamp — sits on the document itself, so
                             it scrolls with the content but can't be deleted */}
                         <img

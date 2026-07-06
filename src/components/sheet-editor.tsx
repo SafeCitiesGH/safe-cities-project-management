@@ -7,6 +7,7 @@ import {
     type CellLocation,
     type Column,
     type DefaultCellTypes,
+    type Highlight,
     type Id,
     type MenuOption,
     type SelectionMode,
@@ -21,8 +22,14 @@ import { Button } from '~/components/ui/button'
 import { Badge } from '~/components/ui/badge'
 import { Card, CardContent } from '~/components/ui/card'
 import { Plus, Activity, Shield, Info, Undo, Redo } from 'lucide-react'
-import { useSupabaseYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
+import { useYjsCollaboration } from '~/hooks/use-yjs-collaboration'
 import * as Y from 'yjs'
+
+function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
+    if (permission === 'edit') return 'editor'
+    if (permission === 'comment') return 'commenter'
+    return 'viewer'
+}
 
 interface SheetEditorProps {
     initialData: SheetData
@@ -57,12 +64,13 @@ export function SheetEditor({
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
     const collaborationEnabled = Boolean(realtimeDocumentId)
-    const collaboration = useSupabaseYjsCollaboration({
+    const collaboration = useYjsCollaboration({
         documentId: realtimeDocumentId,
         enabled: collaborationEnabled,
         permission,
     })
     const {
+        clientId,
         lastError: collaborationLastError,
         markInitialContentLoaded,
         presenceUsers,
@@ -71,11 +79,31 @@ export function SheetEditor({
         updatePresenceMetadata,
         ydoc,
     } = collaboration
+    const currentPresenceColor =
+        presenceUsers.find((presenceUser) => presenceUser.clientId === clientId)
+            ?.color ?? '#7c3aed'
     const sheetMap = React.useMemo(() => ydoc.getMap<string>('sheet'), [ydoc])
     const applyingRemoteChangeRef = useRef(false)
     const sheetLocalOriginRef = useRef(Symbol('sheet-local-update'))
     const sheetRef = useRef<SheetData>(initialData)
     const focusedCellRef = useRef<CellLocation | null>(null)
+    const remoteCellHighlights = React.useMemo<Highlight[]>(
+        () =>
+            presenceUsers
+                .filter(
+                    (presenceUser) =>
+                        presenceUser.clientId !== clientId &&
+                        presenceUser.permission !== 'view' &&
+                        presenceUser.cursor
+                )
+                .map((presenceUser) => ({
+                    rowId: presenceUser.cursor!.rowId,
+                    columnId: presenceUser.cursor!.columnId,
+                    borderColor: presenceUser.color,
+                    className: 'remote-sheet-cell-highlight',
+                })),
+        [clientId, presenceUsers]
+    )
 
     // Rename dialog state
     const [renameState, setRenameState] = useState<{
@@ -111,6 +139,9 @@ export function SheetEditor({
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const lastPersistedSheetJsonRef = useRef<string>(
+        JSON.stringify(initialData)
+    )
 
     // Ref to the outer container div, used for Escape-to-deselect
     const containerRef = useRef<HTMLDivElement>(null)
@@ -119,7 +150,8 @@ export function SheetEditor({
     const formDataColumnCount = syncMetadata?.formDataColumnCount || 0
 
     const updateMutation = api.files.updateSheetContent.useMutation({
-        onSuccess: () => {
+        onSuccess: (_data, variables) => {
+            lastPersistedSheetJsonRef.current = variables.content
             onSavingStatusChange?.('saved')
             setTimeout(() => onSavingStatusChange?.('idle'), 2000)
         },
@@ -140,6 +172,9 @@ export function SheetEditor({
     // Debounced save function - 5 seconds of no editing
     const debouncedSave = useCallback(
         (sheetData: SheetData) => {
+            const serializedSheet = JSON.stringify(sheetData)
+            if (serializedSheet === lastPersistedSheetJsonRef.current) return
+
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
@@ -152,7 +187,7 @@ export function SheetEditor({
                     sheetId,
                     updateMutation.mutateAsync({
                         fileId: sheetId,
-                        content: JSON.stringify(sheetData),
+                        content: serializedSheet,
                     })
                 )
             }, 5000)
@@ -213,6 +248,7 @@ export function SheetEditor({
 
                 applyingRemoteChangeRef.current = true
                 setSheet(nextSheet)
+                lastPersistedSheetJsonRef.current = data
                 setHistory((prev) => {
                     const next = [...prev, nextSheet]
                     return next.length > 50 ? next.slice(-50) : next
@@ -819,7 +855,15 @@ export function SheetEditor({
         }) || []
 
     return (
-        <div className="flex flex-col h-full" ref={containerRef}>
+        <div
+            className="flex flex-col h-full"
+            ref={containerRef}
+            style={
+                {
+                    '--sheet-current-focus-color': currentPresenceColor,
+                } as React.CSSProperties
+            }
+        >
             {collaborationEnabled && (
                 <div className="flex w-full items-center justify-center border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
                     <div className="flex w-full items-center justify-between gap-3">
@@ -851,7 +895,12 @@ export function SheetEditor({
                                             />
                                             {presenceUser.name}
                                             <span className="text-muted-foreground">
-                                                {presenceUser.permission}
+                                                {' '}
+                                                (
+                                                {getPermissionLabel(
+                                                    presenceUser.permission
+                                                )}
+                                                )
                                                 {presenceUser.cursor
                                                     ? ` at ${presenceUser.cursor.label}`
                                                     : ''}
@@ -862,6 +911,16 @@ export function SheetEditor({
                         )}
                     </div>
                 </div>
+            )}
+            {collaborationEnabled && (
+                <style jsx>{`
+                    :global(.remote-sheet-cell-highlight) {
+                        pointer-events: none;
+                    }
+                    :global(.rg-cell-focus) {
+                        border-color: var(--sheet-current-focus-color) !important;
+                    }
+                `}</style>
             )}
             {isLiveSyncSheet && (
                 <style jsx>{`
@@ -996,6 +1055,7 @@ export function SheetEditor({
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
                         onContextMenu={readOnly ? undefined : handleContextMenu}
                         onFocusLocationChanged={handleFocusLocationChanged}
+                        highlights={remoteCellHighlights}
                         enableRowSelection={!readOnly}
                         enableColumnSelection={!readOnly}
                     />
