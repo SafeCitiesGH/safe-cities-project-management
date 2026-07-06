@@ -12,6 +12,18 @@ import { api } from '~/trpc/react'
 
 type Permission = 'view' | 'comment' | 'edit'
 
+// Live editing (realtime collaboration) is temporarily OFF. Its content seeding
+// was gated on the realtime connection succeeding: the editor mounts bound to an
+// empty Yjs doc and only injects the saved content once the realtime channel
+// connects and this client is elected leader. While realtime is flaky/broken,
+// that seed runs late or never, so the editor can load blank/stale content and
+// the debounced auto-save then persists it OVER the real edit — which is why
+// edits vanish "sometimes" on reopen. With this off, files load and save
+// directly from the database (deterministic). Re-enable only once realtime is
+// verified working AND seeding no longer gates content. See
+// docs/LIVE_EDITING_SUPABASE.md.
+const LIVE_EDITING_ENABLED = false
+
 export default function PageView() {
     const params = useParams()
     const router = useRouter()
@@ -410,7 +422,9 @@ export default function PageView() {
                 <SimpleEditor
                     initialContent={content}
                     readOnly={isReadOnly}
-                    realtimeDocumentId={pageId}
+                    realtimeDocumentId={
+                        LIVE_EDITING_ENABLED ? pageId : undefined
+                    }
                     permission={userPermission ?? 'view'}
                     onUpdate={handleContentChange}
                 />

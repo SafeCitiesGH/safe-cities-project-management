@@ -13,6 +13,13 @@ import { toast } from '~/hooks/use-toast'
 
 type PermissionType = 'view' | 'comment' | 'edit'
 
+// Live editing (realtime collaboration) is temporarily OFF while the Supabase
+// realtime connection is being fixed. Keeping it on entangles saving/loading
+// with a flaky connection and risks edits being overwritten. With this off,
+// sheets load and save directly from the database. See the note in
+// src/app/pages/[pageId]/page.tsx and docs/LIVE_EDITING_SUPABASE.md.
+const LIVE_EDITING_ENABLED = false
+
 export default function SheetPage() {
     const params = useParams()
     const sheetId = Number(params.sheetId as string)
@@ -228,7 +235,9 @@ export default function SheetPage() {
                     sheetId={sheetId}
                     sheetName={sheet.name}
                     readOnly={isReadOnly}
-                    realtimeDocumentId={sheetId}
+                    realtimeDocumentId={
+                        LIVE_EDITING_ENABLED ? sheetId : undefined
+                    }
                     permission={userPermission ?? 'view'}
                     syncMetadata={
                         syncMetadata
