@@ -1,0 +1,69 @@
+# ============================================================
+# Supabase Keep-Alive Workflow
+# ============================================================
+# Purpose:
+#   Supabase free-tier databases pause after 7 days of inactivity
+#   and are fully deactivated after 90 days. This workflow runs a
+#   trivial SQL query on a schedule to generate real database
+#   activity and prevent both thresholds.
+#
+# Why a SQL query (not a REST ping)?
+#   This app connects to Postgres directly (Drizzle + the Supabase
+#   connection pooler) and uses Clerk for auth, so the Supabase REST
+#   API / anon role isn't used. The bare /rest/v1/ endpoint is also
+#   restricted to the service_role key, so an anon/publishable key
+#   can never succeed there. Running "select 1" over the same pooler
+#   the app uses is the most reliable keep-alive.
+#
+# Security model:
+#   - The connection string is stored as a GitHub repository Secret,
+#     never hardcoded, and is never printed to the logs.
+#   - The query is read-only ("select 1") — no writes, no schema access.
+#
+# Setup instructions (one-time, done by repo owner):
+#   1. Go to: https://github.com/<org>/<repo>/settings/secrets/actions
+#   2. Add ONE repository secret:
+#        DATABASE_URL → the full Postgres connection string from .env,
+#                       e.g. postgresql://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres
+#   3. That's it. The workflow runs automatically every 3 days.
+# ============================================================
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Every 3 days at 12:00 UTC — safely within the 7-day pause window.
+    # Cron syntax: minute hour day-of-month month day-of-week
+    - cron: "0 12 */3 * *"
+
+  # Allows manual trigger from the GitHub Actions tab for testing.
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Keep Supabase database active
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run keep-alive query against Supabase Postgres
+        env:
+          # Passed via env (never interpolated into the script) and never echoed.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Supabase requires TLS connections.
+          PGSSLMODE: require
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL secret is not set. Add it under repo Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          echo "Running keep-alive query (select 1) against the Supabase pooler ..."
+
+          # psql exits non-zero on any connection or auth failure, which fails
+          # the job. The connection string itself is never printed.
+          if psql "$DATABASE_URL" -tA -c "select 1;" > /dev/null; then
+            echo "✅ Keep-alive query succeeded. Database is active."
+          else
+            echo "❌ Keep-alive query failed. Check the DATABASE_URL secret (host, password, port)."
+            exit 1
+          fi

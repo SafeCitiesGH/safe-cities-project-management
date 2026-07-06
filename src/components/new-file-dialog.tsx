@@ -13,6 +13,8 @@ import {
     UploadCloud,
     AlertTriangle,
     Lock,
+    Eye,
+    EyeOff,
 } from 'lucide-react'
 import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
@@ -49,12 +51,7 @@ import { uploadFileToSupabase } from '~/components/supabase-utils/uploadFile'
 import { useBatchPermissions } from '~/hooks/use-batch-permissions'
 
 export type NewFileType =
-    | 'page'
-    | 'sheet'
-    | 'form'
-    | 'folder'
-    | 'programme'
-    | 'upload'
+    'page' | 'sheet' | 'form' | 'folder' | 'programme' | 'upload'
 
 interface NewFileDialogProps {
     open: boolean
@@ -91,6 +88,8 @@ export function NewFileDialog({
     const [passwordProtect, setPasswordProtect] = useState(false)
     const [password, setPassword] = useState('')
     const [confirmPassword, setConfirmPassword] = useState('')
+    const [showPassword, setShowPassword] = useState(false)
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
     const MIN_PASSWORD_LENGTH = 4
     const passwordsMatch = password === confirmPassword
@@ -142,7 +141,7 @@ export function NewFileDialog({
                     parentId: data.parentId ?? undefined,
                 })
             }
-            if (data && data.id) {
+            if (data?.id) {
                 navigateToFile(router, data.id, data.type)
             }
             setFileName('')
@@ -165,6 +164,8 @@ export function NewFileDialog({
             setPasswordProtect(false)
             setPassword('')
             setConfirmPassword('')
+            setShowPassword(false)
+            setShowConfirmPassword(false)
 
             // Set file type only if provided and different from current
             if (fileType && fileType !== selectedType) {
@@ -192,7 +193,11 @@ export function NewFileDialog({
     const handleCreate = async () => {
         // Block submit if password protection is on but invalid
         if (!passwordValid) return
-        const protectionPassword = passwordProtect ? password : undefined
+        // Containers (programmes/folders) are never password protected.
+        const isContainerType =
+            selectedType === 'programme' || selectedType === 'folder'
+        const protectionPassword =
+            passwordProtect && !isContainerType ? password : undefined
 
         if (selectedType === 'upload') {
             if (!selectedFile) return
@@ -511,73 +516,140 @@ export function NewFileDialog({
                         </div>
                     )}
 
-                    {/* Password protection (Feature 2) */}
-                    <div className="grid gap-3 rounded-md border p-3">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <Lock className="h-4 w-4 text-muted-foreground" />
-                                <div>
-                                    <Label htmlFor="password-protect">
-                                        Password protect this file
-                                    </Label>
-                                    <p className="text-xs text-muted-foreground">
-                                        You&apos;ll be asked for this password
-                                        each time the file is opened.
-                                    </p>
+                    {/* Password protection (Feature 2). Only real files can be
+                        password protected — not containers (programmes/folders). */}
+                    {selectedType !== 'programme' &&
+                        selectedType !== 'folder' && (
+                            <div className="grid gap-3 rounded-md border p-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Lock className="h-4 w-4 text-muted-foreground" />
+                                        <div>
+                                            <Label htmlFor="password-protect">
+                                                Password protect this file
+                                            </Label>
+                                            <p className="text-xs text-muted-foreground">
+                                                You&apos;ll be asked for this
+                                                password each time the file is
+                                                opened.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Switch
+                                        id="password-protect"
+                                        checked={passwordProtect}
+                                        onCheckedChange={(checked) => {
+                                            setPasswordProtect(checked)
+                                            if (!checked) {
+                                                setPassword('')
+                                                setConfirmPassword('')
+                                            }
+                                        }}
+                                        disabled={createFileMutation.isPending}
+                                    />
                                 </div>
-                            </div>
-                            <Switch
-                                id="password-protect"
-                                checked={passwordProtect}
-                                onCheckedChange={(checked) => {
-                                    setPasswordProtect(checked)
-                                    if (!checked) {
-                                        setPassword('')
-                                        setConfirmPassword('')
-                                    }
-                                }}
-                                disabled={createFileMutation.isPending}
-                            />
-                        </div>
 
-                        {passwordProtect && (
-                            <div className="grid gap-2">
-                                <Input
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) =>
-                                        setPassword(e.target.value)
-                                    }
-                                    placeholder="Enter password"
-                                    autoComplete="new-password"
-                                    disabled={createFileMutation.isPending}
-                                />
-                                <Input
-                                    type="password"
-                                    value={confirmPassword}
-                                    onChange={(e) =>
-                                        setConfirmPassword(e.target.value)
-                                    }
-                                    placeholder="Confirm password"
-                                    autoComplete="new-password"
-                                    disabled={createFileMutation.isPending}
-                                />
-                                {password.length > 0 &&
-                                    password.length < MIN_PASSWORD_LENGTH && (
-                                        <p className="text-xs text-red-500">
-                                            Password must be at least{' '}
-                                            {MIN_PASSWORD_LENGTH} characters.
-                                        </p>
-                                    )}
-                                {confirmPassword.length > 0 &&
-                                    !passwordsMatch && (
-                                        <p className="text-xs text-red-500">
-                                            Passwords do not match.
-                                        </p>
-                                    )}
+                                {passwordProtect && (
+                                    <div className="grid gap-2">
+                                        <div className="relative">
+                                            <Input
+                                                type={
+                                                    showPassword
+                                                        ? 'text'
+                                                        : 'password'
+                                                }
+                                                value={password}
+                                                onChange={(e) =>
+                                                    setPassword(e.target.value)
+                                                }
+                                                placeholder="Enter password"
+                                                autoComplete="new-password"
+                                                className="pr-10"
+                                                disabled={
+                                                    createFileMutation.isPending
+                                                }
+                                            />
+                                            <button
+                                                type="button"
+                                                tabIndex={-1}
+                                                aria-label={
+                                                    showPassword
+                                                        ? 'Hide password'
+                                                        : 'Show password'
+                                                }
+                                                onClick={() =>
+                                                    setShowPassword((v) => !v)
+                                                }
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            >
+                                                {showPassword ? (
+                                                    <EyeOff className="h-4 w-4" />
+                                                ) : (
+                                                    <Eye className="h-4 w-4" />
+                                                )}
+                                            </button>
+                                        </div>
+                                        <div className="relative">
+                                            <Input
+                                                type={
+                                                    showConfirmPassword
+                                                        ? 'text'
+                                                        : 'password'
+                                                }
+                                                value={confirmPassword}
+                                                onChange={(e) =>
+                                                    setConfirmPassword(
+                                                        e.target.value
+                                                    )
+                                                }
+                                                placeholder="Confirm password"
+                                                autoComplete="new-password"
+                                                className="pr-10"
+                                                disabled={
+                                                    createFileMutation.isPending
+                                                }
+                                            />
+                                            <button
+                                                type="button"
+                                                tabIndex={-1}
+                                                aria-label={
+                                                    showConfirmPassword
+                                                        ? 'Hide password'
+                                                        : 'Show password'
+                                                }
+                                                onClick={() =>
+                                                    setShowConfirmPassword(
+                                                        (v) => !v
+                                                    )
+                                                }
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            >
+                                                {showConfirmPassword ? (
+                                                    <EyeOff className="h-4 w-4" />
+                                                ) : (
+                                                    <Eye className="h-4 w-4" />
+                                                )}
+                                            </button>
+                                        </div>
+                                        {password.length > 0 &&
+                                            password.length <
+                                                MIN_PASSWORD_LENGTH && (
+                                                <p className="text-xs text-red-500">
+                                                    Password must be at least{' '}
+                                                    {MIN_PASSWORD_LENGTH}{' '}
+                                                    characters.
+                                                </p>
+                                            )}
+                                        {confirmPassword.length > 0 &&
+                                            !passwordsMatch && (
+                                                <p className="text-xs text-red-500">
+                                                    Passwords do not match.
+                                                </p>
+                                            )}
+                                    </div>
+                                )}
                             </div>
                         )}
-                    </div>
                 </div>
                 <DialogFooter>
                     <Button

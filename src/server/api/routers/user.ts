@@ -109,7 +109,30 @@ export const userRouter = createTRPCRouter({
             orderBy: (users, { desc }) => [desc(users.createdAt)],
         })
 
-        return allUsers
+        const client = await clerkClient()
+
+        const usersWithImages = await Promise.all(
+            allUsers.map(async (user) => {
+                try {
+                    const clerkUser = await client.users.getUser(user.id)
+                    return {
+                        ...user,
+                        imageUrl: clerkUser.imageUrl ?? null,
+                    }
+                } catch (error) {
+                    console.error(
+                        `Failed to load Clerk image for user ${user.id}:`,
+                        error
+                    )
+                    return {
+                        ...user,
+                        imageUrl: null,
+                    }
+                }
+            })
+        )
+
+        return usersWithImages
     }),
 
     // Admin-only: changing a user's role is a privilege-escalation surface
@@ -139,20 +162,19 @@ export const userRouter = createTRPCRouter({
                     })
                 }
 
-                // Update Clerk metadata if role is not unverified
-                if (input.role !== 'unverified') {
-                    const client = await clerkClient()
-                    const res = await client.users.updateUserMetadata(
-                        input.id,
-                        {
-                            publicMetadata: {
-                                onboardingComplete: true,
-                                role: input.role,
-                            },
-                        }
-                    )
-                    console.log('Clerk metadata updated:', res.publicMetadata)
-                }
+                // Keep Clerk publicMetadata in sync for EVERY role change,
+                // including demotion to 'unverified'. The middleware reads the
+                // role from the session token, so leaving stale metadata behind
+                // would let a demoted user keep access (and skip the review
+                // screen). onboardingComplete mirrors "is verified".
+                const client = await clerkClient()
+                const res = await client.users.updateUserMetadata(input.id, {
+                    publicMetadata: {
+                        role: input.role,
+                        onboardingComplete: input.role !== 'unverified',
+                    },
+                })
+                console.log('Clerk metadata updated:', res.publicMetadata)
 
                 return {
                     success: true,

@@ -1,5 +1,5 @@
 // Streamlined cache invalidation system for file tree and permissions
-import { api } from '~/trpc/react'
+import { type api } from '~/trpc/react'
 import { fileTreeCache } from './file-tree-cache'
 
 /**

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '~/trpc/react'
 import { SheetEditor } from '~/components/sheet-editor'
@@ -8,6 +8,7 @@ import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
 import { FileUnlockDialog } from '~/components/file-unlock-dialog'
 import { createEmptySheet, type SheetData } from '~/lib/sheet-utils'
+import { waitForPendingSave } from '~/lib/pending-saves'
 import { toast } from '~/hooks/use-toast'
 
 type PermissionType = 'view' | 'comment' | 'edit'
@@ -24,16 +25,38 @@ export default function SheetPage() {
     const [currentSheetData, setCurrentSheetData] = useState<SheetData | null>(
         null
     )
+    // Live editor state, so Download exports what's on screen (saves are
+    // debounced, so the fetched content can lag behind edits).
+    const [liveSheetData, setLiveSheetData] = useState<SheetData | null>(null)
 
     // Password supplied via the unlock dialog for protected files (Feature 2)
     const [filePassword, setFilePassword] = useState<string | undefined>(
         undefined
     )
 
+    // Don't fetch until any in-flight save for this sheet has committed —
+    // otherwise the fetch can win the race and return pre-save content.
+    const [pendingSaveSettled, setPendingSaveSettled] = useState(false)
+    useEffect(() => {
+        let active = true
+        void waitForPendingSave(sheetId).then(() => {
+            if (active) setPendingSaveSettled(true)
+        })
+        return () => {
+            active = false
+        }
+    }, [sheetId])
+
+    // When this visit started. Data fetched before this moment is a cached
+    // copy from a PREVIOUS visit and must never seed the editor.
+    const mountedAtRef = useRef(Date.now())
+
     // Fetch sheet from the server using the unified files router with type validation
     const {
         data: sheet,
         isLoading,
+        isFetching,
+        dataUpdatedAt,
         error,
     } = api.files.getById.useQuery(
         {
@@ -42,7 +65,11 @@ export default function SheetPage() {
             password: filePassword,
         },
         {
-            enabled: !!sheetId,
+            enabled: !!sheetId && pendingSaveSettled,
+            // Always load fresh content when opening a sheet — the 30s cached
+            // copy can predate edits made just before navigating away.
+            staleTime: 0,
+            refetchOnMount: 'always',
             retry: (failureCount, error) => {
                 // Don't retry on permission, type, or password errors
                 if (
@@ -82,7 +109,18 @@ export default function SheetPage() {
         }
     }, [userPermission])
 
-    if (isLoading) {
+    // True once THIS visit's own fetch has completed. While the pending-save
+    // gate holds the query disabled, react-query still exposes the previous
+    // visit's cached copy with isFetching=false — the dataUpdatedAt check
+    // stops that stale copy from seeding the editor.
+    const [hasLoadedFresh, setHasLoadedFresh] = useState(false)
+    useEffect(() => {
+        if (!isFetching && sheet && dataUpdatedAt >= mountedAtRef.current) {
+            setHasLoadedFresh(true)
+        }
+    }, [isFetching, sheet, dataUpdatedAt])
+
+    if (isLoading || (!hasLoadedFresh && !error)) {
         return (
             <div className="container mx-auto p-6">
                 <div className="flex items-center justify-center h-[calc(100vh-200px)]">
@@ -146,6 +184,7 @@ export default function SheetPage() {
                 Array.isArray(restoredData.cells)
             ) {
                 setCurrentSheetData(restoredData)
+                setLiveSheetData(restoredData)
                 toast({
                     title: '✅ Version restored',
                     description:
@@ -168,18 +207,22 @@ export default function SheetPage() {
     const sheetDataToUse = currentSheetData || initialData
 
     return (
-        <div className="h-screen flex flex-col">
+        <div className="h-full flex flex-col">
             <FileHeader
                 filename={sheet.name}
                 fileId={sheetId}
                 permission={localPermission}
                 savingStatus={savingStatus}
+                fileType="sheet"
+                content={JSON.stringify(liveSheetData ?? sheetDataToUse)}
                 onPermissionChange={handlePermissionChange}
                 onVersionHistoryClick={
                     !isReadOnly ? () => setShowVersionHistory(true) : undefined
                 }
             />
-            <div className="flex-1">
+            {/* min-h-0 keeps the grid inside the viewport so IT scrolls,
+                which is what makes the sticky header row work */}
+            <div className="flex-1 min-h-0">
                 <SheetEditor
                     initialData={sheetDataToUse}
                     sheetId={sheetId}
@@ -196,6 +239,7 @@ export default function SheetPage() {
                             : undefined
                     }
                     onSavingStatusChange={setSavingStatus}
+                    onDataChange={setLiveSheetData}
                 />
             </div>
 

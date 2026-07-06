@@ -1,4 +1,5 @@
 import { ArrowUpRight, FileText } from "lucide-react"
+import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card"
 
 interface ProgramCardProps {
@@ -6,11 +7,13 @@ interface ProgramCardProps {
   description: string
   items: number
   lastUpdated: string
+  programId: number
 }
 
-export function ProgramCard({ title, items, lastUpdated }: ProgramCardProps) {
+export function ProgramCard({ title, items, lastUpdated, programId }: ProgramCardProps) {
   return (
-    <Card className="group transition-transform duration-200 hover:-translate-y-1">
+    <Link href={`/programs/${programId}`} className="block">
+    <Card className="group transition-transform duration-200 hover:-translate-y-1 cursor-pointer">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
@@ -44,5 +47,6 @@ export function ProgramCard({ title, items, lastUpdated }: ProgramCardProps) {
         </div>
       </CardContent>
     </Card>
+    </Link>
   )
 }

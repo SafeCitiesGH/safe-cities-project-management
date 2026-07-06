@@ -1,14 +1,42 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, type ReactNode } from 'react'
 import { Button } from '~/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
-import { Eye, MessageSquare, MoreHorizontal, PenSquare, Share2, Users, Download, History, Save } from 'lucide-react'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '~/components/ui/dropdown-menu'
+import {
+    Eye,
+    MessageSquare,
+    MoreHorizontal,
+    PenSquare,
+    Users,
+    Download,
+    History,
+    Save,
+    ChevronDown,
+    FileText,
+    FileType,
+    FileSpreadsheet,
+    Sheet as SheetIcon,
+} from 'lucide-react'
 import { useChatToggle } from '~/hooks/use-chat-toggle'
-import { ShareModal } from '~/components/share-modal'
 import { useSidebar } from './ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
 import { downloadFile } from '~/utils/pdfExport.client'
+import { exportHtmlToDocx } from '~/utils/export/exportDocx.client'
+import { exportSheet } from '~/utils/export/exportSheet.client'
+import {
+    EXPORT_FORMAT_META,
+    FILE_TYPE_EXPORT_FORMATS,
+    type ExportableFileType,
+    type ExportFormat,
+} from '~/utils/export/formats'
 import { api } from '~/trpc/react'
 import { toast } from '~/hooks/use-toast'
 import { SidebarTrigger } from './ui/sidebar'
@@ -21,8 +49,22 @@ interface FileHeaderProps {
     permission: Permission
     savingStatus?: 'saving' | 'saved' | 'idle'
     content?: string
+    /**
+     * The kind of file being shown. Drives which export formats appear in the
+     * Download menu. Defaults to 'page' (document) for backwards compatibility.
+     * For 'sheet', `content` must be the serialized sheet JSON.
+     */
+    fileType?: ExportableFileType
     onPermissionChange?: (permission: Permission) => void
     onVersionHistoryClick?: () => void
+}
+
+// Icon shown next to each format in the Download menu.
+const FORMAT_ICONS: Record<ExportFormat, ReactNode> = {
+    pdf: <FileText size={16} />,
+    docx: <FileType size={16} />,
+    xlsx: <FileSpreadsheet size={16} />,
+    csv: <SheetIcon size={16} />,
 }
 
 const permissionIcons = {
@@ -43,17 +85,20 @@ export function FileHeader({
     permission,
     savingStatus = 'idle',
     content,
+    fileType = 'page',
     onPermissionChange,
     onVersionHistoryClick,
 }: FileHeaderProps) {
     const { toggleChat } = useChatToggle({ pageTitle: filename, fileId })
-    const [isShareModalOpen, setIsShareModalOpen] = useState(false)
+    const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(
+        null
+    )
     const [isRenaming, setIsRenaming] = useState(false)
     const [renamingValue, setRenamingValue] = useState(filename)
     const [displayTitle, setDisplayTitle] = useState(filename)
     const editableRef = useRef<HTMLDivElement>(null)
-    const { state } = useSidebar();
-    const isMobile = useMobile();
+    const { state } = useSidebar()
+    const isMobile = useMobile()
 
     // Update display title when filename prop changes
     useEffect(() => {
@@ -115,15 +160,41 @@ export function FileHeader({
         }
     }
 
-    const handleDownload = async () => {
+    const exportFormats = FILE_TYPE_EXPORT_FORMATS[fileType] ?? []
+
+    // Documents carry the Safe Cities stamp in the top right, same as on screen.
+    const LOGO_HTML =
+        '<p style="text-align: right; margin: 0"><img src="/safe-cities-logo.jpg" alt="Safe Cities" width="80"></p>'
+
+    const handleExport = async (format: ExportFormat) => {
+        if (!content || exportingFormat) return
+
+        const exportContent =
+            fileType === 'page' ? LOGO_HTML + content : content
+
+        setExportingFormat(format)
         try {
-            // Get the actual content of the file
-            if (content) {
-                await downloadFile(content, `${filename}.pdf`)
+            if (format === 'pdf') {
+                await downloadFile(exportContent, `${filename}.pdf`)
+            } else if (format === 'docx') {
+                await exportHtmlToDocx(exportContent, `${filename}.docx`)
+            } else if (format === 'xlsx' || format === 'csv') {
+                await exportSheet(content, `${filename}.${format}`, format)
             }
+
+            toast({
+                title: 'Download started',
+                description: `"${filename}" exported as ${format.toUpperCase()}.`,
+            })
         } catch (error) {
-            console.error('Error downloading file:', error)
-            // You might want to show a toast notification here
+            console.error('Error exporting file:', error)
+            toast({
+                title: 'Export failed',
+                description: `Could not export as ${format.toUpperCase()}. Please try again.`,
+                variant: 'destructive',
+            })
+        } finally {
+            setExportingFormat(null)
         }
     }
 
@@ -233,15 +304,6 @@ export function FileHeader({
                         variant="outline"
                         size="sm"
                         className="gap-2"
-                        onClick={() => setIsShareModalOpen(true)}
-                    >
-                        <Share2 size={16} />
-                        Share
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-2"
                         onClick={toggleChat}
                     >
                         <MessageSquare size={16} />
@@ -258,26 +320,60 @@ export function FileHeader({
                             History
                         </Button>
                     )}
-                    {content && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={handleDownload}
-                        >
-                            <Download size={16} />
-                            Download
-                        </Button>
+                    {content && exportFormats.length > 0 && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-2"
+                                    disabled={exportingFormat !== null}
+                                >
+                                    <Download size={16} />
+                                    Download
+                                    <ChevronDown size={14} />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-64">
+                                <DropdownMenuLabel>
+                                    Download as
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {exportFormats.map((format) => {
+                                    const meta = EXPORT_FORMAT_META[format]
+                                    return (
+                                        <DropdownMenuItem
+                                            key={format}
+                                            disabled={exportingFormat !== null}
+                                            onSelect={(event) => {
+                                                // Keep the menu logic in our handler
+                                                // rather than letting Radix close it
+                                                // before the async work starts.
+                                                event.preventDefault()
+                                                void handleExport(format)
+                                            }}
+                                            className="flex flex-col items-start gap-0.5"
+                                        >
+                                            <span className="flex items-center gap-2">
+                                                {FORMAT_ICONS[format]}
+                                                {meta.label}
+                                                {exportingFormat === format && (
+                                                    <span className="ml-1 h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                                                )}
+                                            </span>
+                                            {meta.hint && (
+                                                <span className="pl-6 text-xs text-muted-foreground">
+                                                    {meta.hint}
+                                                </span>
+                                            )}
+                                        </DropdownMenuItem>
+                                    )
+                                })}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     )}
                 </div>
             </div>
-
-            <ShareModal
-                isOpen={isShareModalOpen}
-                onClose={() => setIsShareModalOpen(false)}
-                filename={filename}
-                fileId={fileId}
-            />
         </>
     )
 }

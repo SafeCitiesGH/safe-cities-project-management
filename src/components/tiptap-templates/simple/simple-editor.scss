@@ -1,66 +1,67 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
 body {
-  --tt-toolbar-height: 44px;
-  --tt-theme-text: var(--tt-gray-light-900);
+    --tt-toolbar-height: 44px;
+    --tt-theme-text: var(--tt-gray-light-900);
 
-  .dark & {
-    --tt-theme-text: var(--tt-gray-dark-900);
-  }
+    .dark & {
+        --tt-theme-text: var(--tt-gray-dark-900);
+    }
 }
 
 body {
-  font-family: "Inter", sans-serif;
-  color: var(--tt-theme-text);
-  font-optical-sizing: auto;
-  font-weight: 400;
-  font-style: normal;
-  padding: 0;
+    font-family: 'Inter', sans-serif;
+    color: var(--tt-theme-text);
+    font-optical-sizing: auto;
+    font-weight: 400;
+    font-style: normal;
+    padding: 0;
 }
 
 html,
 body,
 #root,
 #app {
-  height: 100%;
-  background-color: var(--tt-bg-color);
+    height: 100%;
+    background-color: var(--tt-bg-color);
 }
 
 body {
-  overflow: hidden;
+    overflow: hidden;
 }
 
 .tiptap.ProseMirror {
-  font-family: "DM Sans", sans-serif;
+    font-family: 'DM Sans', sans-serif;
 }
 
 .content-wrapper {
-  height: calc(100vh - 200px);
-  /* Providing explicit height with room for headers/tabs */
-  overflow-y: auto;
-  position: relative;
-  width: 190mm;
-  margin: 0 auto;
-  max-width: 100%;
+    /* Fill whatever height the card gives us and scroll internally —
+     viewport-based heights break when the app shell changes */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    position: relative;
+    width: 190mm;
+    margin: 0 auto;
+    max-width: 100%;
 
+    &::-webkit-scrollbar {
+        display: block;
+        width: 0.5rem;
+    }
 
-  &::-webkit-scrollbar {
-    display: block;
-    width: 0.5rem;
-  }
+    &::-webkit-scrollbar-track {
+        background: transparent;
+    }
 
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
+    &::-webkit-scrollbar-thumb {
+        background-color: var(--tt-scrollbar-color);
+        border-radius: 4px;
+    }
 
-  &::-webkit-scrollbar-thumb {
-    background-color: var(--tt-scrollbar-color);
-    border-radius: 4px;
-  }
-
-  /* Firefox scrollbar */
-  scrollbar-width: thin;
-  scrollbar-color: var(--tt-scrollbar-color) transparent;
+    /* Firefox scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: var(--tt-scrollbar-color) transparent;
 }
 
 .remote-editor-caret {
@@ -90,38 +91,37 @@ body {
 }
 
 /* Add styling for the toolbar to ensure it stays fixed */
-[role="toolbar"] {
-  position: sticky;
-  top: 0;
-  background: var(--background, #fff);
-  z-index: 10;
-  border-bottom: 1px solid var(--border, #eee);
+[role='toolbar'] {
+    position: sticky;
+    top: 0;
+    background: var(--background, #fff);
+    z-index: 10;
+    border-bottom: 1px solid var(--border, #eee);
 }
 
 .simple-editor-content {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .simple-editor-content .tiptap.ProseMirror {
-  padding: 3rem 3rem;
-  min-height: 100%;
-  padding-bottom: 10rem; // or any large value
+    padding: 3rem 3rem;
+    min-height: 100%;
+    padding-bottom: 10rem; // or any large value
 }
-
 
 /* Add styles for the editor container */
 .simple-editor-container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-  /* Prevent unwanted scrolling */
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    /* Prevent unwanted scrolling */
 }
 
 @media screen and (max-width: 480px) {
-  .simple-editor-content .tiptap.ProseMirror {
-    padding: 1rem 1.5rem;
-  }
+    .simple-editor-content .tiptap.ProseMirror {
+        padding: 1rem 1.5rem;
+    }
 }

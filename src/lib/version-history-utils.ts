@@ -1,7 +1,7 @@
 import { eq, and } from 'drizzle-orm'
 import { createHash } from 'crypto'
 import { pageVersionHistory } from '~/server/db/schema'
-import { db } from '~/server/db'
+import { type db } from '~/server/db'
 
 /**
  * Creates a SHA-256 hash of the content for efficient duplicate detection

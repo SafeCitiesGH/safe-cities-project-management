@@ -97,10 +97,15 @@ export const filesRouter = createTRPCRouter({
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
 
-            // Hash the password if password protection was requested
-            const passwordHash = input.password
-                ? await hashFilePassword(input.password)
-                : null
+            // Hash the password if password protection was requested. Containers
+            // (programmes/folders) can never be password protected.
+            const isContainerType =
+                input.type === FILE_TYPES.PROGRAMME ||
+                input.type === FILE_TYPES.FOLDER
+            const passwordHash =
+                input.password && !isContainerType
+                    ? await hashFilePassword(input.password)
+                    : null
 
             // Create the file record
             const [file] = await ctx.db
@@ -128,11 +133,16 @@ export const filesRouter = createTRPCRouter({
                 })
                 .returning()
 
-            // If it's a page, create the page content
+            // If it's a page, create the page content. The Safe Cities logo is
+            // stamped on every document by the editor/exports, not stored here.
             if (input.type === FILE_TYPES.PAGE && file) {
+                const safeName = input.name
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
                 await ctx.db.insert(pageContent).values({
                     fileId: file.id,
-                    content: `# ${input.name}`,
+                    content: `<h1>${safeName}</h1>`,
                     version: 1,
                 })
             }
@@ -387,11 +397,13 @@ export const filesRouter = createTRPCRouter({
                 })
             }
 
-            // Password gate (Feature 2). Admins bypass the prompt entirely.
-            // Non-admins must supply the correct password every time, since no
-            // unlock state is cached. The sentinel messages let the client
-            // distinguish "needs password" / "wrong password" from a plain denial.
-            if (file.isPasswordProtected && !permissionContext.isAdmin) {
+            // Password gate (Feature 2). EVERYONE must supply the correct
+            // password to open a protected file — admins included. An admin
+            // (or the file's owner) who doesn't know it can reset it via the
+            // "Forgot password?" flow on the unlock prompt. No unlock state is
+            // cached, so this runs on every open. The sentinel messages let the
+            // client tell "needs password" / "wrong password" from a plain deny.
+            if (file.isPasswordProtected) {
                 if (!input.password) {
                     throw new TRPCError({
                         code: 'UNAUTHORIZED',
@@ -472,16 +484,8 @@ export const filesRouter = createTRPCRouter({
             // Unprotected files are trivially "unlocked"
             if (!file.isPasswordProtected) return { ok: true }
 
-            // Admins bypass the password
-            const isAdmin =
-                (
-                    await ctx.db.query.users.findFirst({
-                        where: eq(users.id, userId),
-                        columns: { role: true },
-                    })
-                )?.role === 'admin'
-            if (isAdmin) return { ok: true }
-
+            // No admin bypass: admins must enter the password too (or reset it
+            // via "Forgot password?").
             const throttle = registerPasswordAttempt(userId, file.id)
             if (!throttle.allowed) {
                 throw new TRPCError({
@@ -496,6 +500,111 @@ export const filesRouter = createTRPCRouter({
             )
             if (ok) clearPasswordAttempts(userId, file.id)
             return { ok }
+        }),
+
+    // Lightweight metadata for the password-management UI (Feature 2).
+    // Returns whether the file is protected and whether the caller is allowed
+    // to manage that protection (the file's owner or an admin). Never returns
+    // the hash itself.
+    getPasswordMeta: protectedProcedure
+        .input(z.object({ fileId: z.number() }))
+        .query(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const file = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.fileId),
+                columns: {
+                    id: true,
+                    isPasswordProtected: true,
+                    createdBy: true,
+                },
+            })
+            if (!file) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'File not found',
+                })
+            }
+
+            const isAdmin =
+                (
+                    await ctx.db.query.users.findFirst({
+                        where: eq(users.id, userId),
+                        columns: { role: true },
+                    })
+                )?.role === 'admin'
+
+            return {
+                isPasswordProtected: file.isPasswordProtected ?? false,
+                // Owner or admin may set / change / remove the password.
+                canManage: isAdmin || file.createdBy === userId,
+            }
+        }),
+
+    // Set, change, or remove a file's password (Feature 2 recovery path).
+    // Authorization: the file's owner (createdBy) or an admin. Pass a non-empty
+    // `password` to set/replace it, or `null` to remove protection entirely.
+    // This is the "forgot password" answer: an owner can reset their own file's
+    // password, and admins can reset anyone's.
+    updateFilePassword: protectedProcedure
+        .input(
+            z.object({
+                fileId: z.number(),
+                // null / omitted => remove protection; string (min 4) => set/replace
+                password: z.string().min(4).nullable(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const file = await ctx.db.query.files.findFirst({
+                where: eq(files.id, input.fileId),
+                columns: { id: true, createdBy: true },
+            })
+            if (!file) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'File not found',
+                })
+            }
+
+            const isAdmin =
+                (
+                    await ctx.db.query.users.findFirst({
+                        where: eq(users.id, userId),
+                        columns: { role: true },
+                    })
+                )?.role === 'admin'
+
+            if (!isAdmin && file.createdBy !== userId) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message:
+                        'Only the file owner or an administrator can change its password',
+                })
+            }
+
+            const passwordHash = input.password
+                ? await hashFilePassword(input.password)
+                : null
+
+            await ctx.db
+                .update(files)
+                .set({
+                    isPasswordProtected: passwordHash !== null,
+                    passwordHash,
+                    updatedBy: userId,
+                    updatedAt: new Date(),
+                })
+                .where(eq(files.id, file.id))
+
+            // Reset any throttle so the new password can be tried immediately.
+            clearPasswordAttempts(userId, file.id)
+
+            return {
+                success: true,
+                isPasswordProtected: passwordHash !== null,
+            }
         }),
 
     // Update file metadata (name, parent, order, etc.)
@@ -516,6 +625,27 @@ export const filesRouter = createTRPCRouter({
         .mutation(async ({ ctx, input }) => {
             const { id, ...updateData } = input
             const { userId } = ctx.auth
+
+            // Renaming or moving a programme is admin-only (it's an org-wide,
+            // top-level container). Assigned editors can rename files inside it,
+            // but not the programme itself.
+            const target = await ctx.db.query.files.findFirst({
+                where: eq(files.id, id),
+                columns: { type: true },
+            })
+            if (target?.type === FILE_TYPES.PROGRAMME) {
+                const me = await ctx.db.query.users.findFirst({
+                    where: eq(users.id, userId),
+                    columns: { role: true },
+                })
+                if (me?.role !== 'admin') {
+                    throw new TRPCError({
+                        code: 'FORBIDDEN',
+                        message:
+                            'Only an administrator can rename or move a programme',
+                    })
+                }
+            }
 
             const updateValues = {
                 ...updateData,
@@ -559,7 +689,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentPage && currentPage.content) {
+            if (currentPage?.content) {
                 // Save current content to version history before updating
                 // This will update the timestamp if the same content already exists
                 await saveVersionHistoryWithDeduplication(ctx.db, {
@@ -683,7 +813,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentSheet && currentSheet.content) {
+            if (currentSheet?.content) {
                 // Save current content to version history before updating
                 // This will update the timestamp if the same content already exists
                 await saveVersionHistoryWithDeduplication(ctx.db, {
@@ -786,6 +916,16 @@ export const filesRouter = createTRPCRouter({
                 throw new TRPCError({
                     code: 'NOT_FOUND',
                     message: 'File not found',
+                })
+            }
+
+            // Deleting a programme is admin-only, even for members assigned with
+            // edit access. This prevents an assigned user from wiping an entire
+            // programme.
+            if (file.type === FILE_TYPES.PROGRAMME && !permissionContext.isAdmin) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'Only an administrator can delete a programme',
                 })
             }
 
@@ -1397,7 +1537,7 @@ export const filesRouter = createTRPCRouter({
                 columns: { content: true, version: true },
             })
 
-            if (currentPage && currentPage.content) {
+            if (currentPage?.content) {
                 // Save current content to version history before restoring
                 await saveVersionHistoryWithDeduplication(ctx.db, {
                     fileId: input.fileId,

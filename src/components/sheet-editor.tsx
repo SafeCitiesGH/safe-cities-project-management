@@ -15,6 +15,7 @@ import {
 import '@silevis/reactgrid/styles.scss'
 import { applyChangesToSheet, type SheetData } from '~/lib/sheet-utils'
 import { isFormDataColumn } from '~/lib/form-sync-utils'
+import { trackPendingSave } from '~/lib/pending-saves'
 import { api } from '~/trpc/react'
 import { toast } from '~/hooks/use-toast'
 import { Button } from '~/components/ui/button'
@@ -45,6 +46,8 @@ interface SheetEditorProps {
     permission?: 'view' | 'comment' | 'edit'
     onSavingStatusChange?: (status: 'idle' | 'saving' | 'saved') => void
     onShowVersionHistory?: () => void
+    /** Reports every sheet change so the parent can export current data. */
+    onDataChange?: (data: SheetData) => void
 }
 
 export function SheetEditor({
@@ -57,6 +60,7 @@ export function SheetEditor({
     permission = 'view',
     onSavingStatusChange,
     onShowVersionHistory,
+    onDataChange,
 }: SheetEditorProps) {
     const [sheet, setSheet] = useState<SheetData>(initialData)
     const collaborationEnabled = Boolean(realtimeDocumentId)
@@ -130,7 +134,8 @@ export function SheetEditor({
 
     useEffect(() => {
         sheetRef.current = sheet
-    }, [sheet])
+        onDataChange?.(sheet)
+    }, [sheet, onDataChange])
 
     // Debounced saving - only save after 5 seconds of no editing
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -160,6 +165,10 @@ export function SheetEditor({
         },
     })
 
+    // Stable mutate ref for the unmount flush below
+    const saveSheetRef = useRef(updateMutation.mutateAsync)
+    saveSheetRef.current = updateMutation.mutateAsync
+
     // Debounced save function - 5 seconds of no editing
     const debouncedSave = useCallback(
         (sheetData: SheetData) => {
@@ -169,12 +178,18 @@ export function SheetEditor({
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
             }
+            // Every save is tracked so a quick reopen of this sheet waits for
+            // it instead of racing it and reading stale content.
             saveTimeoutRef.current = setTimeout(() => {
+                saveTimeoutRef.current = null
                 onSavingStatusChange?.('saving')
-                updateMutation.mutate({
-                    fileId: sheetId,
-                    content: serializedSheet,
-                })
+                trackPendingSave(
+                    sheetId,
+                    updateMutation.mutateAsync({
+                        fileId: sheetId,
+                        content: serializedSheet,
+                    })
+                )
             }, 5000)
         },
         [sheetId, updateMutation, onSavingStatusChange]
@@ -365,7 +380,7 @@ export function SheetEditor({
     const isMacOs = useCallback(() => {
         return (
             typeof navigator !== 'undefined' &&
-            navigator.platform.toUpperCase().indexOf('MAC') >= 0
+            navigator.platform.toUpperCase().includes('MAC')
         )
     }, [])
 
@@ -429,12 +444,23 @@ export function SheetEditor({
             document.removeEventListener('mousedown', handleOutsideClick)
     }, [])
 
+    // On unmount, flush any pending debounced save — otherwise edits made in
+    // the last 5s are silently lost when navigating away.
     useEffect(() => {
         return () => {
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current)
+                saveTimeoutRef.current = null
+                trackPendingSave(
+                    sheetId,
+                    saveSheetRef.current({
+                        fileId: sheetId,
+                        content: JSON.stringify(sheetRef.current),
+                    })
+                )
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // Add a new column
@@ -692,7 +718,8 @@ export function SheetEditor({
                 const colIndex = colIds[0]!
                 const headerRow =
                     sheet.rows.find((r) => r.rowId === 'header') ??
-                    sheet.rows.find((r) => r.rowId === 'alphabetical-header')
+                    sheet.rows.find((r) => r.rowId === 'alphabetical-header') ??
+                    sheet.rows.find((r) => r.rowId === 'form-field-header')
                 const currentText =
                     (headerRow?.cells[colIndex] as { text?: string })?.text ??
                     ''
@@ -798,6 +825,21 @@ export function SheetEditor({
         [readOnly, isLiveSyncSheet, formDataColumnCount, sheet, commitChange]
     )
 
+    // Leading header rows (column letters / form questions) stay pinned while
+    // scrolling, as does the row-number column.
+    const HEADER_ROW_IDS = [
+        'header',
+        'alphabetical-header',
+        'form-field-header',
+    ]
+    let stickyTopRows = 0
+    while (
+        stickyTopRows < sheet.rows.length &&
+        HEADER_ROW_IDS.includes(String(sheet.rows[stickyTopRows]?.rowId))
+    ) {
+        stickyTopRows++
+    }
+
     const columns: Column[] =
         sheet.rows[0]?.cells.map((_, index) => {
             const isFormDataCol =
@@ -859,6 +901,9 @@ export function SheetEditor({
                                                     presenceUser.permission
                                                 )}
                                                 )
+                                                {presenceUser.cursor
+                                                    ? ` at ${presenceUser.cursor.label}`
+                                                    : ''}
                                             </span>
                                         </span>
                                     ))}
@@ -1000,11 +1045,13 @@ export function SheetEditor({
             )}
 
             <div className="flex-1 min-h-0 p-4">
-                <div className="rg-container dark:bg-background dark:text-foreground rounded-lg border">
+                <div className="rg-container dark:bg-background dark:text-foreground h-full max-h-full rounded-lg border">
                     <ReactGrid
                         rows={sheet.rows}
                         columns={columns}
                         minRowHeight={35}
+                        stickyTopRows={stickyTopRows}
+                        stickyLeftColumns={1}
                         onCellsChanged={readOnly ? undefined : onCellsChanged}
                         onContextMenu={readOnly ? undefined : handleContextMenu}
                         onFocusLocationChanged={handleFocusLocationChanged}

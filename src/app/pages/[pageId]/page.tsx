@@ -7,6 +7,7 @@ import { SimpleEditor } from '~/components/tiptap-templates/simple/simple-editor
 import { FileHeader } from '~/components/file-header'
 import { VersionHistory } from '~/components/version-history'
 import { FileUnlockDialog } from '~/components/file-unlock-dialog'
+import { trackPendingSave, waitForPendingSave } from '~/lib/pending-saves'
 import { api } from '~/trpc/react'
 
 type Permission = 'view' | 'comment' | 'edit'
@@ -21,10 +22,30 @@ export default function PageView() {
         undefined
     )
 
+    // Don't fetch until any in-flight save for this page has committed —
+    // otherwise the fetch can win the race and return pre-save content, which
+    // then seeds the editor and overwrites the edit on the next auto-save.
+    const [pendingSaveSettled, setPendingSaveSettled] = useState(false)
+    useEffect(() => {
+        let active = true
+        void waitForPendingSave(pageId).then(() => {
+            if (active) setPendingSaveSettled(true)
+        })
+        return () => {
+            active = false
+        }
+    }, [pageId])
+
+    // When this visit started. Data fetched before this moment is a cached
+    // copy from a PREVIOUS visit and must never seed the editor.
+    const mountedAtRef = useRef(Date.now())
+
     // Fetch page data using tRPC with type validation
     const {
         data: page,
         isLoading,
+        isFetching,
+        dataUpdatedAt,
         error,
     } = api.files.getById.useQuery(
         {
@@ -33,7 +54,11 @@ export default function PageView() {
             password: filePassword,
         },
         {
-            enabled: !!pageId,
+            enabled: !!pageId && pendingSaveSettled,
+            // Always load fresh content when opening a page — the 30s cached
+            // copy can predate edits made just before navigating away.
+            staleTime: 0,
+            refetchOnMount: 'always',
             retry: (failureCount, error) => {
                 // Don't retry on permission, type, or password errors
                 if (
@@ -107,28 +132,31 @@ export default function PageView() {
     // Debounced content update using useRef to store timer
     const contentUpdateTimerRef = useRef<NodeJS.Timeout | null>(null)
     const lastPersistedContentRef = useRef<string>('')
+    // Latest unsaved content + stable mutate ref, for the unmount flush below
+    const latestContentRef = useRef<string>('')
+    const savePageRef = useRef(updatePageMutation.mutateAsync)
+    savePageRef.current = updatePageMutation.mutateAsync
 
-    // Update content when page data loads, but only once
+    // Seed the editor once, and ONLY from data fetched during this visit.
+    // While the pending-save gate holds the query disabled, react-query still
+    // exposes the cached copy from the previous visit with isFetching=false —
+    // seeding from that resurrects pre-edit content, which the next auto-save
+    // then persists (this was the "edits don't save" bug).
     useEffect(() => {
-        if (page?.content?.content && !hasInitialContentLoaded) {
-            setContent(page.content.content)
-            setLastSyncedContent(page.content.content)
-            lastPersistedContentRef.current = page.content.content
-            setHasInitialContentLoaded(true)
+        if (hasInitialContentLoaded) return
+        if (isFetching || !page) return
+        if (dataUpdatedAt < mountedAtRef.current) return // stale cached copy
+
+        const freshContent = page.content?.content ?? ''
+        setContent(freshContent)
+        setLastSyncedContent(freshContent)
+        latestContentRef.current = freshContent
+        lastPersistedContentRef.current = freshContent
+        setHasInitialContentLoaded(true)
+        if (page.content?.updatedAt) {
+            setLastSyncedAt(page.content.updatedAt.toISOString())
         }
-        if (page?.content?.updatedAt && !lastSyncedAt) {
-            setLastSyncedAt(
-                page.content.updatedAt
-                    ? page.content.updatedAt.toISOString()
-                    : null
-            )
-        }
-    }, [
-        page?.content?.content,
-        page?.content?.updatedAt,
-        hasInitialContentLoaded,
-        lastSyncedAt,
-    ])
+    }, [isFetching, dataUpdatedAt, page, hasInitialContentLoaded])
 
     // Update local permission when user permission loads
     useEffect(() => {
@@ -140,7 +168,11 @@ export default function PageView() {
     // Handle content change with debounced saving
     const handleContentChange = useCallback(
         (newContent: string) => {
+            // Ignore no-op updates (e.g. the editor re-emitting content we just
+            // loaded into it) so they don't schedule pointless saves.
+            if (newContent === latestContentRef.current) return
             setContent(newContent)
+            latestContentRef.current = newContent
 
             // Only auto-save if user has edit permissions
             if (!userPermission || userPermission === 'view') return
@@ -151,25 +183,40 @@ export default function PageView() {
                 clearTimeout(contentUpdateTimerRef.current)
             }
 
-            // Set new timer for debounced save
+            // Set new timer for debounced save. Every save is tracked so a
+            // quick reopen of this page waits for it instead of racing it.
             contentUpdateTimerRef.current = setTimeout(() => {
+                contentUpdateTimerRef.current = null
                 setSavingStatus('saving')
-                updatePageMutation.mutate({
-                    fileId: pageId,
-                    content: newContent,
-                })
-            }, 5000)
+                trackPendingSave(
+                    pageId,
+                    updatePageMutation.mutateAsync({
+                        fileId: pageId,
+                        content: newContent,
+                    })
+                )
+            }, 1500) // 1.5 seconds debounce interval (server waits 1.5 seconds after no more keystroke to save)
         },
         [pageId, userPermission, updatePageMutation]
     )
 
-    // Clean up timer on unmount
+    // On unmount, flush any pending debounced save — otherwise edits made in
+    // the last 1.5s are silently lost when navigating away.
     useEffect(() => {
         return () => {
             if (contentUpdateTimerRef.current) {
                 clearTimeout(contentUpdateTimerRef.current)
+                contentUpdateTimerRef.current = null
+                trackPendingSave(
+                    pageId,
+                    savePageRef.current({
+                        fileId: pageId,
+                        content: latestContentRef.current,
+                    })
+                )
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // When polling for remote updates:
@@ -188,6 +235,7 @@ export default function PageView() {
                     if (content === lastSyncedContent) {
                         setContent(data.content)
                         setLastSyncedContent(data.content)
+                        latestContentRef.current = data.content
                         setLastSyncedAt(data.lastUpdated)
                     } else {
                         // Optionally, show a non-intrusive toast: "Remote changes detected, please save or reload."
@@ -217,7 +265,14 @@ export default function PageView() {
     // Determine if the editor should be read-only based on permissions
     const isReadOnly = isPermissionLoading || userPermission !== 'edit'
 
-    if (isLoading || isPermissionLoading) {
+    // Hold the loading screen until this visit's own fetch has seeded the
+    // editor, so it can never initialize from a stale cached copy.
+    if (
+        !pendingSaveSettled ||
+        isLoading ||
+        isPermissionLoading ||
+        (!hasInitialContentLoaded && !error)
+    ) {
         return (
             <div className="container mx-auto p-6">
                 <div className="flex items-center justify-center h-[calc(100vh-200px)]">
@@ -340,12 +395,13 @@ export default function PageView() {
     }
 
     return (
-        <div className="h-screen flex flex-col">
+        <div className="h-full flex flex-col">
             <FileHeader
                 filename={page.name || 'Untitled Page'}
                 fileId={pageId}
                 permission={localPermission}
                 savingStatus={savingStatus}
+                fileType="page"
                 content={content}
                 onVersionHistoryClick={() => setIsVersionHistoryOpen(true)}
             />

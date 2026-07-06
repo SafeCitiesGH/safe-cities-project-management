@@ -1,34 +1,51 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 
 import { getAuthUser } from '~/server/auth'
 import {
-    getGoogleCalendarClient,
+    fetchGoogleCalendarEvents,
     GoogleCalendarConnectionError,
-    mapGoogleCalendarEvent,
 } from '~/server/google-calendar'
+
+const DEFAULT_PAST_MONTHS = 12
+const DEFAULT_FUTURE_MONTHS = 12
+
+function buildDefaultTimeRange() {
+    const now = new Date()
+    const timeMin = new Date(now)
+    const timeMax = new Date(now)
+
+    timeMin.setMonth(timeMin.getMonth() - DEFAULT_PAST_MONTHS)
+    timeMax.setMonth(timeMax.getMonth() + DEFAULT_FUTURE_MONTHS)
+
+    return {
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+    }
+}
 
 export async function GET(req: NextRequest) {
     const auth = getAuthUser(req)
+    const defaultRange = buildDefaultTimeRange()
 
     if (!auth?.userId) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     try {
-        const calendar = await getGoogleCalendarClient(auth.userId)
-        const now = new Date().toISOString()
+        const timeMin =
+            req.nextUrl.searchParams.get('timeMin') ??
+            defaultRange.timeMin
+        const timeMax =
+            req.nextUrl.searchParams.get('timeMax') ??
+            defaultRange.timeMax
 
-        const res = await calendar.events.list({
-            calendarId: 'primary',
-            timeMin: now,
-            maxResults: 2500,
-            singleEvents: true,
-            orderBy: 'startTime',
+        const events = await fetchGoogleCalendarEvents({
+            userId: auth.userId,
+            timeMin,
+            timeMax,
         })
 
-        return NextResponse.json(
-            (res.data.items ?? []).map((item) => mapGoogleCalendarEvent(item))
-        )
+        return NextResponse.json(events)
     } catch (error) {
         if (error instanceof GoogleCalendarConnectionError) {
             return NextResponse.json(

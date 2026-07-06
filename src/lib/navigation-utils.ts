@@ -22,11 +22,12 @@ export function navigateToFile(
         case FILE_TYPES.UPLOAD:
             router.push(`/uploads/${fileId}`)
             break
-        // Folders and programmes don't have dedicated pages, so no navigation
-        case FILE_TYPES.FOLDER:
         case FILE_TYPES.PROGRAMME:
+            router.push(`/programs/${fileId}`)
+            break
+        // Folders don't have dedicated pages
+        case FILE_TYPES.FOLDER:
         default:
-            // No navigation for folders/programmes
             break
     }
 }

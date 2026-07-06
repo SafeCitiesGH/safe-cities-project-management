@@ -26,7 +26,9 @@ import {
     Download,
     ChevronDown,
     ExternalLink,
+    Link2,
 } from 'lucide-react'
+import { exportFormQuestions } from '~/utils/export/exportForm.client'
 import { SubmissionDetails } from '~/components/submission-details'
 import {
     Collapsible,
@@ -119,12 +121,33 @@ export default function FormView() {
         window.open(getFormUrl(), '_blank')
     }
 
+    const copyFormLink = async () => {
+        await navigator.clipboard.writeText(getFormUrl())
+        toast({
+            title: 'Link copied',
+            description:
+                'Anyone with this link can open and fill out the form.',
+        })
+    }
+
+    const downloadQuestions = () => {
+        exportFormQuestions(
+            formData.fields,
+            `${formData.file.name} - questions.csv`
+        )
+        toast({
+            title: 'Download started',
+            description:
+                'Question list exported as CSV — use it to rebuild the form in Google Forms if needed.',
+        })
+    }
+
     return (
-        <div className="flex h-screen flex-col">
+        <div className="flex h-full flex-col">
             <FileHeader
                 filename={formData.file.name}
                 fileId={formData.file.id}
-                permission={userPermission as Permission}
+                permission={userPermission!}
                 savingStatus={savingStatus}
             />
 
@@ -171,7 +194,23 @@ export default function FormView() {
                                 )}
                             </div>
                         </div>
-                        <div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={copyFormLink}
+                                className="flex items-center gap-2"
+                            >
+                                <Link2 className="h-4 w-4" />
+                                Copy Link
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={downloadQuestions}
+                                className="flex items-center gap-2"
+                            >
+                                <Download className="h-4 w-4" />
+                                Export Questions
+                            </Button>
                             <Button
                                 variant="outline"
                                 onClick={openFormInNewTab}

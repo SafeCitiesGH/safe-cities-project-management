@@ -400,7 +400,7 @@ export function FormBuilder({
                                         <SelectItem key={type} value={type}>
                                             {
                                                 FIELD_TYPE_LABELS[
-                                                    type as keyof typeof FIELD_TYPE_LABELS
+                                                    type
                                                 ]
                                             }
                                         </SelectItem>

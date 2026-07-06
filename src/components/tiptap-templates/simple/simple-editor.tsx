@@ -432,11 +432,17 @@ export function SimpleEditor({
         }
     }, [collaborationEnabled, editor, onUpdate])
 
-    // Handle initialContent changes from parent
+    // Handle initialContent changes from parent. Never while the editor is
+    // focused — resetting mid-typing would drop keystrokes and the caret.
     React.useEffect(() => {
         if (collaborationEnabled) return
 
-        if (editor && initialContent && editor.getHTML() !== initialContent) {
+        if (
+            editor &&
+            initialContent &&
+            !editor.isFocused &&
+            editor.getHTML() !== initialContent
+        ) {
             editor.commands.setContent(initialContent)
         }
     }, [collaborationEnabled, editor, initialContent])
@@ -551,7 +557,7 @@ export function SimpleEditor({
                         </div>
                     </div>
                 )}
-                <div className="w-full max-w-4xl my-8 border border-border rounded-lg shadow bg-card p-6">
+                <div className="relative flex min-h-0 w-full max-w-4xl flex-1 flex-col my-8 border border-border rounded-lg shadow bg-card p-6">
                     <div
                         ref={contentWrapperRef}
                         className="content-wrapper"
@@ -591,6 +597,13 @@ export function SimpleEditor({
                                 </span>
                             </div>
                         ))}
+                        {/* Safe Cities stamp — sits on the document itself, so
+                            it scrolls with the content but can't be deleted */}
+                        <img
+                            src="/safe-cities-logo.jpg"
+                            alt="Safe Cities"
+                            className="pointer-events-none absolute right-8 top-8 z-10 w-20 select-none"
+                        />
                         <EditorContent
                             editor={editor}
                             role="presentation"

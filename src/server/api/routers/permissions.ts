@@ -41,6 +41,35 @@ import {
     clearAllPermissionCaches,
 } from '~/lib/permissions-ultra-fast'
 import { TRPCError } from '@trpc/server'
+import { db } from '~/server/db'
+
+/**
+ * Guards programme-wide sharing. Sharing/unsharing an entire programme is
+ * admin-only (it cascades access to everything inside), so a non-admin editor
+ * is blocked here even though they may share individual files. No-op for
+ * non-programme files.
+ */
+async function assertNotNonAdminProgrammeShare(
+    fileId: number,
+    currentUserId: string
+) {
+    const file = await db.query.files.findFirst({
+        where: eq(files.id, fileId),
+        columns: { type: true },
+    })
+    if (file?.type !== FILE_TYPES.PROGRAMME) return
+
+    const me = await db.query.users.findFirst({
+        where: eq(users.id, currentUserId),
+        columns: { role: true },
+    })
+    if (me?.role !== 'admin') {
+        throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only an administrator can share or unshare a programme.',
+        })
+    }
+}
 
 export const permissionsRouter = createTRPCRouter({
     // Set permission for a user on a file
@@ -68,6 +97,11 @@ export const permissionsRouter = createTRPCRouter({
                         'You do not have permission to manage sharing for this file',
                 })
             }
+
+            // Programme-wide sharing is admin-only. A non-admin editor may share
+            // individual files, but granting access to an entire programme is
+            // reserved for admins (matches the Manage Members governance).
+            await assertNotNonAdminProgrammeShare(input.fileId, currentUserId)
 
             const result = await setFilePermission(
                 input.fileId,
@@ -136,6 +170,10 @@ export const permissionsRouter = createTRPCRouter({
                         'You do not have permission to manage sharing for this file',
                 })
             }
+
+            // Same admin-only rule as sharing: only admins may change who has
+            // access to an entire programme.
+            await assertNotNonAdminProgrammeShare(input.fileId, currentUserId)
 
             return await removeFilePermission(input.fileId, input.userId)
         }),
