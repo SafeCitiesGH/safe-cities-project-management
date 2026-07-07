@@ -24,6 +24,13 @@ import { Card, CardContent } from '~/components/ui/card'
 import { Plus, Activity, Shield, Info, Undo, Redo } from 'lucide-react'
 import { useSupabaseYjsCollaboration as useYjsCollaboration } from '~/hooks/use-supabase-yjs-collaboration'
 import * as Y from 'yjs'
+import {
+    applySheetToCrdt,
+    crdtToSheet,
+    isSheetCrdtEmpty,
+    bytesToBase64,
+    base64ToBytes,
+} from '~/lib/sheet-crdt'
 
 function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
     if (permission === 'edit') return 'editor'
@@ -33,6 +40,8 @@ function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
 
 interface SheetEditorProps {
     initialData: SheetData
+    // Canonical Yjs state (base64) from the DB. null/undefined = not seeded yet.
+    initialYjsState?: string | null
     sheetId: number
     sheetName?: string
     readOnly?: boolean
@@ -52,6 +61,7 @@ interface SheetEditorProps {
 
 export function SheetEditor({
     initialData,
+    initialYjsState,
     sheetId,
     sheetName,
     readOnly = false,
@@ -72,9 +82,7 @@ export function SheetEditor({
     const {
         clientId,
         lastError: collaborationLastError,
-        markInitialContentLoaded,
         presenceUsers,
-        shouldLoadInitialContent,
         status: collaborationStatus,
         updatePresenceMetadata,
         ydoc,
@@ -82,9 +90,17 @@ export function SheetEditor({
     const currentPresenceColor =
         presenceUsers.find((presenceUser) => presenceUser.clientId === clientId)
             ?.color ?? '#7c3aed'
-    const sheetMap = React.useMemo(() => ydoc.getMap<string>('sheet'), [ydoc])
     const applyingRemoteChangeRef = useRef(false)
     const sheetLocalOriginRef = useRef(Symbol('sheet-local-update'))
+
+    // Loads the canonical sheet CRDT once, deterministically, independent of the
+    // realtime connection (same data-safety guarantee as documents).
+    const canonicalLoadedRef = useRef(false)
+    const seedSheetYjsState = api.files.seedSheetYjsStateIfAbsent.useMutation()
+    const seedSheetYjsStateRef = useRef(seedSheetYjsState.mutateAsync)
+    seedSheetYjsStateRef.current = seedSheetYjsState.mutateAsync
+    // Latest canonical Yjs state, persisted with the JSON content on save.
+    const latestYjsStateRef = useRef<string | undefined>(undefined)
     const sheetRef = useRef<SheetData>(initialData)
     const focusedCellRef = useRef<CellLocation | null>(null)
     const remoteCellHighlights = React.useMemo<Highlight[]>(
@@ -183,28 +199,36 @@ export function SheetEditor({
             saveTimeoutRef.current = setTimeout(() => {
                 saveTimeoutRef.current = null
                 onSavingStatusChange?.('saving')
+                // Derive BOTH the JSON content and the Yjs state from the merged
+                // CRDT so they stay consistent (the doc may have absorbed remote
+                // edits since this local change).
+                const contentToSave = collaborationEnabled
+                    ? JSON.stringify(crdtToSheet(ydoc))
+                    : serializedSheet
+                const yjsState = collaborationEnabled
+                    ? bytesToBase64(Y.encodeStateAsUpdate(ydoc))
+                    : undefined
+                if (yjsState !== undefined) latestYjsStateRef.current = yjsState
                 trackPendingSave(
                     sheetId,
                     updateMutation.mutateAsync({
                         fileId: sheetId,
-                        content: serializedSheet,
+                        content: contentToSave,
+                        yjsState,
                     })
                 )
             }, 5000)
         },
-        [sheetId, updateMutation, onSavingStatusChange]
+        [sheetId, updateMutation, onSavingStatusChange, collaborationEnabled, ydoc]
     )
 
+    // Publish local edits into the cell-level CRDT (writes only changed cells).
     const publishSheetToRealtime = useCallback(
         (sheetData: SheetData) => {
             if (!collaborationEnabled) return
-
-            ydoc.transact(() => {
-                sheetMap.set('data', JSON.stringify(sheetData))
-                sheetMap.set('updatedAt', String(Date.now()))
-            }, sheetLocalOriginRef.current)
+            applySheetToCrdt(ydoc, sheetData, sheetLocalOriginRef.current)
         },
-        [collaborationEnabled, sheetMap, ydoc]
+        [collaborationEnabled, ydoc]
     )
 
     // Commit a new sheet state: updates the sheet, pushes a snapshot to history, and saves.
@@ -225,66 +249,85 @@ export function SheetEditor({
         [historyIndex, publishSheetToRealtime, debouncedSave]
     )
 
+    // Apply remote CRDT changes. Fires once per transaction; skips our own
+    // edits (localOrigin) and rebuilds the sheet from the merged cell state.
     useEffect(() => {
         if (!collaborationEnabled) return
 
-        const handleRemoteSheetChange = (event: Y.YMapEvent<string>) => {
-            if (event.transaction.origin === sheetLocalOriginRef.current) return
-            if (!event.keysChanged.has('data')) return
+        const handleUpdate = (_update: Uint8Array, origin: unknown) => {
+            if (origin === sheetLocalOriginRef.current) return
+            if (isSheetCrdtEmpty(ydoc)) return
 
-            const data = sheetMap.get('data')
-            if (!data) return
-
-            try {
-                const nextSheet = JSON.parse(data) as SheetData
-                if (
-                    !nextSheet?.rows ||
-                    !Array.isArray(nextSheet.rows) ||
-                    !nextSheet?.cells ||
-                    !Array.isArray(nextSheet.cells)
-                ) {
-                    return
-                }
-
-                applyingRemoteChangeRef.current = true
-                setSheet(nextSheet)
-                lastPersistedSheetJsonRef.current = data
-                setHistory((prev) => {
-                    const next = [...prev, nextSheet]
-                    return next.length > 50 ? next.slice(-50) : next
-                })
-                setHistoryIndex((prev) => Math.min(prev + 1, 50))
-                window.setTimeout(() => {
-                    applyingRemoteChangeRef.current = false
-                }, 0)
-            } catch (error) {
-                console.warn('Failed to apply remote sheet update', error)
-            }
+            const nextSheet = crdtToSheet(ydoc)
+            applyingRemoteChangeRef.current = true
+            setSheet(nextSheet)
+            sheetRef.current = nextSheet
+            // The originating client persists the change; mark it as the known
+            // saved state here so this receiver doesn't redundantly re-save it.
+            lastPersistedSheetJsonRef.current = JSON.stringify(nextSheet)
+            window.setTimeout(() => {
+                applyingRemoteChangeRef.current = false
+            }, 0)
         }
 
-        sheetMap.observe(handleRemoteSheetChange)
+        ydoc.on('update', handleUpdate)
+        return () => {
+            ydoc.off('update', handleUpdate)
+        }
+    }, [collaborationEnabled, ydoc])
+
+    // Deterministic canonical load — once, independent of the connection. Loads
+    // the DB's Yjs state, or seeds it from initialData through the atomic guard
+    // so two simultaneous first-openers can't fork the sheet.
+    useEffect(() => {
+        if (!collaborationEnabled || canonicalLoadedRef.current) return
+        canonicalLoadedRef.current = true
+
+        let cancelled = false
+        void (async () => {
+            let canonicalBase64 = initialYjsState ?? null
+
+            if (!canonicalBase64) {
+                const seedDoc = new Y.Doc()
+                applySheetToCrdt(seedDoc, initialData, 'seed')
+                const seedBase64 = bytesToBase64(
+                    Y.encodeStateAsUpdate(seedDoc)
+                )
+                try {
+                    const result = await seedSheetYjsStateRef.current({
+                        fileId: Number(realtimeDocumentId),
+                        yjsState: seedBase64,
+                    })
+                    canonicalBase64 = result.yjsState ?? seedBase64
+                } catch (error) {
+                    console.warn(
+                        'Live sheet seeding failed; using local data',
+                        error
+                    )
+                    canonicalBase64 = seedBase64
+                }
+            }
+
+            if (cancelled || !canonicalBase64) return
+            // localOrigin so the update handler above ignores it; we setSheet here.
+            Y.applyUpdate(
+                ydoc,
+                base64ToBytes(canonicalBase64),
+                sheetLocalOriginRef.current
+            )
+            const nextSheet = crdtToSheet(ydoc)
+            if (nextSheet.rows.length > 0) {
+                setSheet(nextSheet)
+                sheetRef.current = nextSheet
+                lastPersistedSheetJsonRef.current = JSON.stringify(nextSheet)
+            }
+        })()
 
         return () => {
-            sheetMap.unobserve(handleRemoteSheetChange)
+            cancelled = true
         }
-    }, [collaborationEnabled, sheetMap])
-
-    useEffect(() => {
-        if (!collaborationEnabled || !shouldLoadInitialContent) return
-
-        if (!sheetMap.get('data')) {
-            publishSheetToRealtime(sheet)
-        }
-
-        markInitialContentLoaded()
-    }, [
-        collaborationEnabled,
-        markInitialContentLoaded,
-        publishSheetToRealtime,
-        sheet,
-        sheetMap,
-        shouldLoadInitialContent,
-    ])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [collaborationEnabled, ydoc])
 
     // Apply a rename to a header cell (column header or row label)
     const applyRename = useCallback(
@@ -456,6 +499,7 @@ export function SheetEditor({
                     saveSheetRef.current({
                         fileId: sheetId,
                         content: JSON.stringify(sheetRef.current),
+                        yjsState: latestYjsStateRef.current,
                     })
                 )
             }
@@ -580,16 +624,22 @@ export function SheetEditor({
     }
 
     const getCellLabel = useCallback((location: CellLocation) => {
-        const columnIndex =
+        const rawColumnIndex =
             typeof location.columnId === 'number'
                 ? location.columnId
                 : Number(location.columnId)
+        // Grid column 0 is the row-number header, so data column A is grid
+        // index 1 — shift back by one to get the spreadsheet letter.
+        const columnIndex = rawColumnIndex - 1
+
         const rowId = String(location.rowId)
+        // "row-N" already encodes the displayed row number N; don't add to it.
         const rowNumber = rowId.startsWith('row-')
-            ? Number(rowId.replace('row-', '')) + 1
+            ? rowId.replace('row-', '')
             : rowId
 
         const getColumnLetter = (index: number): string => {
+            if (index < 0) return ''
             let result = ''
             let value = Number.isFinite(index) ? index : 0
 

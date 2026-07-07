@@ -171,6 +171,10 @@ export const sheetContent = createTable('sheet_content', (d) => ({
         .references(() => files.id, { onDelete: 'cascade' })
         .primaryKey(),
     content: d.text().default('[]'), // JSON string of sheet data
+    // Canonical Yjs (CRDT) state as base64, for true cell-level simultaneous
+    // editing. NULL = never opened collaboratively; first collab open seeds it
+    // from `content` (see seedSheetYjsStateIfAbsent).
+    yjsState: d.text(),
     schema: d.text(), // JSON string of column definitions
     version: d.integer().default(1), // For versioning support
     createdAt: d.timestamp().notNull().defaultNow(),
