@@ -6,6 +6,10 @@ import { EditorContent, EditorContext, useEditor } from '@tiptap/react'
 // --- Tiptap Core Extensions ---
 import { StarterKit } from '@tiptap/starter-kit'
 import { Collaboration, isChangeOrigin } from '@tiptap/extension-collaboration'
+import * as Y from 'yjs'
+import { prosemirrorToYDoc } from 'y-prosemirror'
+import { DOMParser as PMDOMParser, type Schema } from '@tiptap/pm/model'
+import { api } from '~/trpc/react'
 import { TaskList } from '@tiptap/extension-task-list'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { Typography } from '@tiptap/extension-typography'
@@ -211,16 +215,50 @@ function getPermissionLabel(permission: 'view' | 'comment' | 'edit') {
     return 'viewer'
 }
 
+// Yjs document state travels to/from the server as base64 text.
+function bytesToBase64(bytes: Uint8Array) {
+    let binary = ''
+    for (let index = 0; index < bytes.length; index += 1) {
+        binary += String.fromCharCode(bytes[index]!)
+    }
+    return window.btoa(binary)
+}
+
+function base64ToBytes(value: string) {
+    const binary = window.atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
+}
+
+// Build a Yjs document from existing HTML using the editor's own schema, so the
+// seeded CRDT state matches exactly what the Collaboration extension expects.
+// 'default' is Tiptap Collaboration's XML fragment name — it must match here.
+function htmlToYjsState(html: string, schema: Schema): Uint8Array {
+    const body = new window.DOMParser().parseFromString(
+        html && html.trim() ? html : '<p></p>',
+        'text/html'
+    ).body
+    const pmNode = PMDOMParser.fromSchema(schema).parse(body)
+    const doc = prosemirrorToYDoc(pmNode, 'default')
+    return Y.encodeStateAsUpdate(doc)
+}
+
 interface SimpleEditorProps {
     initialContent?: string
+    // Canonical Yjs state (base64) from the DB. null/undefined = not seeded yet.
+    initialYjsState?: string | null
     readOnly?: boolean
-    onUpdate?: (content: string) => void
+    onUpdate?: (content: string, yjsState?: string) => void
     realtimeDocumentId?: string | number
     permission?: 'view' | 'comment' | 'edit'
 }
 
 export function SimpleEditor({
     initialContent,
+    initialYjsState,
     readOnly = false,
     onUpdate,
     realtimeDocumentId,
@@ -243,13 +281,19 @@ export function SimpleEditor({
     const {
         clientId,
         lastError: collaborationLastError,
-        markInitialContentLoaded,
         presenceUsers,
-        shouldLoadInitialContent,
         status: collaborationStatus,
         updatePresenceMetadata,
         ydoc,
     } = collaboration
+
+    // Loads the canonical Yjs state into the doc exactly once, deterministically,
+    // and independent of the realtime connection (this is what prevents the
+    // "content only appears if the socket connects" data-loss class of bug).
+    const canonicalLoadedRef = React.useRef(false)
+    const seedYjsState = api.files.seedYjsStateIfAbsent.useMutation()
+    const seedYjsStateRef = React.useRef(seedYjsState.mutateAsync)
+    seedYjsStateRef.current = seedYjsState.mutateAsync
 
     const editor = useEditor({
         immediatelyRender: false,
@@ -422,7 +466,12 @@ export function SimpleEditor({
             if (collaborationEnabled && isChangeOrigin(transaction)) return
 
             const htmlContent = editor.getHTML()
-            onUpdate(htmlContent)
+            // In collaborative mode, persist the full merged CRDT state (HTML is
+            // kept too, for version history / exports / the non-collab path).
+            const yjsState = collaborationEnabled
+                ? bytesToBase64(Y.encodeStateAsUpdate(ydoc))
+                : undefined
+            onUpdate(htmlContent, yjsState)
         }
 
         editor.on('update', handleUpdate)
@@ -430,7 +479,7 @@ export function SimpleEditor({
         return () => {
             editor.off('update', handleUpdate)
         }
-    }, [collaborationEnabled, editor, onUpdate])
+    }, [collaborationEnabled, editor, onUpdate, ydoc])
 
     // Handle initialContent changes from parent. Never while the editor is
     // focused — resetting mid-typing would drop keystrokes and the caret.
@@ -447,25 +496,52 @@ export function SimpleEditor({
         }
     }, [collaborationEnabled, editor, initialContent])
 
+    // Deterministic canonical load. Runs once when the editor is ready — NOT
+    // gated on the realtime connection, so your content always appears and can
+    // never be silently replaced by an empty doc while the socket is down.
     React.useEffect(() => {
-        if (!collaborationEnabled || !editor || !shouldLoadInitialContent) {
+        if (!collaborationEnabled || !editor || canonicalLoadedRef.current) {
             return
         }
+        canonicalLoadedRef.current = true
 
-        const contentToLoad =
-            initialContent && initialContent.trim() !== ''
-                ? initialContent
-                : '<p></p>'
+        let cancelled = false
+        void (async () => {
+            let canonicalBase64 = initialYjsState ?? null
 
-        editor.commands.setContent(contentToLoad)
-        markInitialContentLoaded()
-    }, [
-        collaborationEnabled,
-        editor,
-        initialContent,
-        markInitialContentLoaded,
-        shouldLoadInitialContent,
-    ])
+            // No canonical state yet: seed it from the existing HTML and claim it
+            // atomically. Whoever wins, everyone applies the SAME returned state,
+            // so two simultaneous first-openers can't create divergent copies.
+            if (!canonicalBase64) {
+                const seedBase64 = bytesToBase64(
+                    htmlToYjsState(initialContent ?? '', editor.schema)
+                )
+                try {
+                    const result = await seedYjsStateRef.current({
+                        fileId: Number(realtimeDocumentId),
+                        yjsState: seedBase64,
+                    })
+                    canonicalBase64 = result.yjsState ?? seedBase64
+                } catch (error) {
+                    // Offline / seed failed: fall back to local content so the
+                    // user can still see and edit; the next save persists it.
+                    console.warn(
+                        'Live editing: seeding failed, using local content',
+                        error
+                    )
+                    canonicalBase64 = seedBase64
+                }
+            }
+
+            if (cancelled || !canonicalBase64) return
+            Y.applyUpdate(ydoc, base64ToBytes(canonicalBase64))
+        })()
+
+        return () => {
+            cancelled = true
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [collaborationEnabled, editor, ydoc])
 
     // Handle readOnly prop changes
     React.useEffect(() => {

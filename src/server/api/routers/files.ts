@@ -1,4 +1,14 @@
-import { eq, sql, desc, asc, ne, and, isNotNull, inArray } from 'drizzle-orm'
+import {
+    eq,
+    sql,
+    desc,
+    asc,
+    ne,
+    and,
+    isNull,
+    isNotNull,
+    inArray,
+} from 'drizzle-orm'
 import { z } from 'zod'
 
 import {
@@ -662,6 +672,10 @@ export const filesRouter = createTRPCRouter({
             z.object({
                 fileId: z.number(),
                 content: z.string(),
+                // Canonical Yjs state (base64). Sent by the collaborative editor
+                // so the merged document survives reloads. Optional so the plain
+                // (non-collaborative) save path keeps working unchanged.
+                yjsState: z.string().optional(),
             })
         )
         .mutation(async ({ ctx, input }) => {
@@ -714,11 +728,16 @@ export const filesRouter = createTRPCRouter({
                         .where(inArray(pageVersionHistory.id, idsToDelete))
                 }
 
-                // Update the page content with incremented version
+                // Update the page content with incremented version. yjsState is
+                // only written when the collaborative editor supplies it, so the
+                // plain save path never clobbers it with undefined.
                 await ctx.db
                     .update(pageContent)
                     .set({
                         content: input.content,
+                        ...(input.yjsState !== undefined
+                            ? { yjsState: input.yjsState }
+                            : {}),
                         version: (currentPage.version ?? 0) + 1,
                         updatedAt: new Date(),
                     })
@@ -728,6 +747,7 @@ export const filesRouter = createTRPCRouter({
                 await ctx.db.insert(pageContent).values({
                     fileId: input.fileId,
                     content: input.content,
+                    yjsState: input.yjsState,
                     version: 1,
                 })
             }
@@ -777,6 +797,61 @@ export const filesRouter = createTRPCRouter({
             }
 
             return { success: true }
+        }),
+
+    // Seed the canonical Yjs state for a page ONLY if it doesn't have one yet.
+    // This is the atomic guard that stops two people who open a fresh document at
+    // the same time from creating two divergent collaborative copies: the write
+    // only lands where yjsState IS NULL, so exactly one client wins. Everyone
+    // (winner and losers) then uses the yjsState this returns as canonical.
+    seedYjsStateIfAbsent: protectedProcedure
+        .input(
+            z.object({
+                fileId: z.number(),
+                yjsState: z.string(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const permissionContext = await getUserPermissionContext(userId)
+            const ancestors = await getFileAncestors(input.fileId)
+            const canEdit = hasPermissionInContext(
+                permissionContext,
+                input.fileId,
+                'edit',
+                ancestors.map((ancestor) => ancestor.id)
+            )
+            if (!canEdit) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'You do not have permission to edit this page',
+                })
+            }
+
+            // Atomic compare-and-set: only writes where yjsState IS NULL.
+            const won = await ctx.db
+                .update(pageContent)
+                .set({ yjsState: input.yjsState })
+                .where(
+                    and(
+                        eq(pageContent.fileId, input.fileId),
+                        isNull(pageContent.yjsState)
+                    )
+                )
+                .returning({ yjsState: pageContent.yjsState })
+
+            if (won.length > 0) {
+                return { yjsState: input.yjsState, seeded: true }
+            }
+
+            // Someone else already seeded (or it already had state). Return the
+            // canonical value so this client adopts it instead of its own seed.
+            const existing = await ctx.db.query.pageContent.findFirst({
+                where: eq(pageContent.fileId, input.fileId),
+                columns: { yjsState: true },
+            })
+            return { yjsState: existing?.yjsState ?? null, seeded: false }
         }),
 
     // Update sheet content
