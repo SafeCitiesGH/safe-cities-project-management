@@ -48,6 +48,11 @@ type SupabaseBrowserClient = ReturnType<typeof createClient<any, 'public', any>>
 const REMOTE_ORIGIN = Symbol('supabase-realtime-remote')
 const SUBSCRIBE_TIMEOUT_MS = 10_000
 const HEARTBEAT_INTERVAL_MS = 5_000
+// A live client re-broadcasts its presence every HEARTBEAT_INTERVAL_MS, so any
+// presence not refreshed within this window is a dead session (an unclean
+// disconnect the server hasn't reaped) and is hidden. Generous enough to absorb
+// small clock differences between machines and a couple of missed heartbeats.
+const PRESENCE_FRESH_MS = 20_000
 const RECONNECT_DELAY_MS = 500
 const CHANNEL_OPERATION_TIMEOUT_MS = 5_000
 const HEARTBEAT_FAILURES_BEFORE_RECONNECT = 3
@@ -309,7 +314,28 @@ function isYDocEmpty(ydoc: Y.Doc) {
 function flattenPresenceState(
     state: Record<string, PresenceUser[]>
 ): PresenceUser[] {
-    return Object.values(state).flat().filter(Boolean)
+    const now = Date.now()
+    // Keep only the freshest presence per client id. Reconnects and unclean
+    // disconnects can leave several entries for the same (or a dead) session;
+    // collapsing by client id + dropping stale ones stops phantom cursors and
+    // an inflated "who's online" count.
+    const latestByClient = new Map<string, PresenceUser>()
+    for (const presences of Object.values(state)) {
+        for (const presence of presences) {
+            if (!presence?.clientId) continue
+            const existing = latestByClient.get(presence.clientId)
+            if (
+                !existing ||
+                (presence.joinedAt ?? 0) > (existing.joinedAt ?? 0)
+            ) {
+                latestByClient.set(presence.clientId, presence)
+            }
+        }
+    }
+
+    return [...latestByClient.values()].filter(
+        (presence) => now - (presence.joinedAt ?? 0) < PRESENCE_FRESH_MS
+    )
 }
 
 function getClientId() {

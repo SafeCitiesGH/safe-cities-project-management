@@ -22,7 +22,7 @@ type Permission = 'view' | 'comment' | 'edit'
 // directly from the database (deterministic). Re-enable only once realtime is
 // verified working AND seeding no longer gates content. See
 // docs/LIVE_EDITING_SUPABASE.md.
-const LIVE_EDITING_ENABLED = false
+const LIVE_EDITING_ENABLED = true
 
 export default function PageView() {
     const params = useParams()
@@ -146,6 +146,9 @@ export default function PageView() {
     const lastPersistedContentRef = useRef<string>('')
     // Latest unsaved content + stable mutate ref, for the unmount flush below
     const latestContentRef = useRef<string>('')
+    // Latest canonical Yjs state from the collaborative editor, persisted
+    // alongside the HTML so the merged document survives reloads.
+    const latestYjsStateRef = useRef<string | undefined>(undefined)
     const savePageRef = useRef(updatePageMutation.mutateAsync)
     savePageRef.current = updatePageMutation.mutateAsync
 
@@ -179,7 +182,9 @@ export default function PageView() {
 
     // Handle content change with debounced saving
     const handleContentChange = useCallback(
-        (newContent: string) => {
+        (newContent: string, yjsState?: string) => {
+            // Keep the latest Yjs state for the debounced save + unmount flush.
+            if (yjsState !== undefined) latestYjsStateRef.current = yjsState
             // Ignore no-op updates (e.g. the editor re-emitting content we just
             // loaded into it) so they don't schedule pointless saves.
             if (newContent === latestContentRef.current) return
@@ -205,6 +210,7 @@ export default function PageView() {
                     updatePageMutation.mutateAsync({
                         fileId: pageId,
                         content: newContent,
+                        yjsState: latestYjsStateRef.current,
                     })
                 )
             }, 1500) // 1.5 seconds debounce interval (server waits 1.5 seconds after no more keystroke to save)
@@ -224,6 +230,7 @@ export default function PageView() {
                     savePageRef.current({
                         fileId: pageId,
                         content: latestContentRef.current,
+                        yjsState: latestYjsStateRef.current,
                     })
                 )
             }
@@ -421,6 +428,11 @@ export default function PageView() {
             <div className="flex-1 min-h-0 flex flex-col justify-start items-center bg-background">
                 <SimpleEditor
                     initialContent={content}
+                    initialYjsState={
+                        page?.content && 'yjsState' in page.content
+                            ? (page.content.yjsState ?? null)
+                            : null
+                    }
                     readOnly={isReadOnly}
                     realtimeDocumentId={
                         LIVE_EDITING_ENABLED ? pageId : undefined

@@ -122,7 +122,11 @@ export const pageContent = createTable('page_content', (d) => ({
         .integer()
         .references(() => files.id, { onDelete: 'cascade' })
         .primaryKey(),
-    content: d.text().default(''),
+    content: d.text().default(''), // HTML — the human-readable / exportable copy
+    // Canonical Yjs (CRDT) document state as base64, for true simultaneous
+    // editing. NULL = this page has never been opened collaboratively yet; the
+    // first collaborative open seeds it from `content` (see seedYjsStateIfAbsent).
+    yjsState: d.text(),
     version: d.integer().default(1), // For versioning support
     createdAt: d.timestamp().notNull().defaultNow(),
     updatedAt: d.timestamp().defaultNow(),
