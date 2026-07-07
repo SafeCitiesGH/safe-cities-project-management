@@ -624,16 +624,22 @@ export function SheetEditor({
     }
 
     const getCellLabel = useCallback((location: CellLocation) => {
-        const columnIndex =
+        const rawColumnIndex =
             typeof location.columnId === 'number'
                 ? location.columnId
                 : Number(location.columnId)
+        // Grid column 0 is the row-number header, so data column A is grid
+        // index 1 — shift back by one to get the spreadsheet letter.
+        const columnIndex = rawColumnIndex - 1
+
         const rowId = String(location.rowId)
+        // "row-N" already encodes the displayed row number N; don't add to it.
         const rowNumber = rowId.startsWith('row-')
-            ? Number(rowId.replace('row-', '')) + 1
+            ? rowId.replace('row-', '')
             : rowId
 
         const getColumnLetter = (index: number): string => {
+            if (index < 0) return ''
             let result = ''
             let value = Number.isFinite(index) ? index : 0
 
