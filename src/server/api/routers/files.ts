@@ -854,6 +854,55 @@ export const filesRouter = createTRPCRouter({
             return { yjsState: existing?.yjsState ?? null, seeded: false }
         }),
 
+    // Atomic first-seed for a sheet's canonical Yjs state (same guard as the
+    // page version above, targeting sheetContent).
+    seedSheetYjsStateIfAbsent: protectedProcedure
+        .input(
+            z.object({
+                fileId: z.number(),
+                yjsState: z.string(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+
+            const permissionContext = await getUserPermissionContext(userId)
+            const ancestors = await getFileAncestors(input.fileId)
+            const canEdit = hasPermissionInContext(
+                permissionContext,
+                input.fileId,
+                'edit',
+                ancestors.map((ancestor) => ancestor.id)
+            )
+            if (!canEdit) {
+                throw new TRPCError({
+                    code: 'FORBIDDEN',
+                    message: 'You do not have permission to edit this sheet',
+                })
+            }
+
+            const won = await ctx.db
+                .update(sheetContent)
+                .set({ yjsState: input.yjsState })
+                .where(
+                    and(
+                        eq(sheetContent.fileId, input.fileId),
+                        isNull(sheetContent.yjsState)
+                    )
+                )
+                .returning({ yjsState: sheetContent.yjsState })
+
+            if (won.length > 0) {
+                return { yjsState: input.yjsState, seeded: true }
+            }
+
+            const existing = await ctx.db.query.sheetContent.findFirst({
+                where: eq(sheetContent.fileId, input.fileId),
+                columns: { yjsState: true },
+            })
+            return { yjsState: existing?.yjsState ?? null, seeded: false }
+        }),
+
     // Update sheet content
     updateSheetContent: protectedProcedure
         .input(
@@ -861,6 +910,9 @@ export const filesRouter = createTRPCRouter({
                 fileId: z.number(),
                 content: z.string(),
                 schema: z.string().optional(),
+                // Canonical Yjs state (base64) for cell-level collaboration.
+                // Optional so the plain save path keeps working unchanged.
+                yjsState: z.string().optional(),
             })
         )
         .mutation(async ({ ctx, input }) => {
@@ -914,12 +966,16 @@ export const filesRouter = createTRPCRouter({
                 }
             }
 
-            // Update the sheet content with incremented version
+            // Update the sheet content with incremented version. yjsState is
+            // only written when the collaborative editor supplies it.
             await ctx.db
                 .update(sheetContent)
                 .set({
                     content: input.content,
                     schema: input.schema,
+                    ...(input.yjsState !== undefined
+                        ? { yjsState: input.yjsState }
+                        : {}),
                     version: (currentSheet?.version ?? 0) + 1,
                     updatedAt: new Date(),
                 })

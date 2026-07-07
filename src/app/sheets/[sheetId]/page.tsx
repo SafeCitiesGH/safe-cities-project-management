@@ -18,7 +18,7 @@ type PermissionType = 'view' | 'comment' | 'edit'
 // with a flaky connection and risks edits being overwritten. With this off,
 // sheets load and save directly from the database. See the note in
 // src/app/pages/[pageId]/page.tsx and docs/LIVE_EDITING_SUPABASE.md.
-const LIVE_EDITING_ENABLED = false
+const LIVE_EDITING_ENABLED = true
 
 export default function SheetPage() {
     const params = useParams()
@@ -232,6 +232,11 @@ export default function SheetPage() {
             <div className="flex-1 min-h-0">
                 <SheetEditor
                     initialData={sheetDataToUse}
+                    initialYjsState={
+                        sheet.content && 'yjsState' in sheet.content
+                            ? (sheet.content.yjsState ?? null)
+                            : null
+                    }
                     sheetId={sheetId}
                     sheetName={sheet.name}
                     readOnly={isReadOnly}
