@@ -9,7 +9,7 @@ import {
 
 function getSafeRedirectPath(value: string | null) {
     if (!value?.startsWith('/')) {
-        return '/google-calendar'
+        return '/calendar'
     }
 
     return value

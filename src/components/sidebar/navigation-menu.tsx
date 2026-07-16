@@ -23,8 +23,8 @@ const navigationItems = [
         adminOnly: false,
     },
     {
-        href: '/google-calendar',
-        label: 'Google Calendar',
+        href: '/calendar',
+        label: 'Calendar',
         icon: CalendarDays,
         adminOnly: false,
     },
