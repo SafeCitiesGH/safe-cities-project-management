@@ -14,7 +14,7 @@ import {
 
 function buildRedirectUrl(req: NextRequest, status: string, detail?: string) {
     const redirectPath =
-        req.cookies.get('google_oauth_redirect')?.value ?? '/google-calendar'
+        req.cookies.get('google_oauth_redirect')?.value ?? '/calendar'
     const url = new URL(redirectPath, req.url)
 
     url.searchParams.set('google', status)

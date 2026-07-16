@@ -34,7 +34,7 @@ export function GoogleConnectButton({
                 }
 
                 setIsLoading(true)
-                window.location.href = '/api/google/auth?redirect=/google-calendar'
+                window.location.href = '/api/google/auth?redirect=/calendar'
             }}
         >
             <Icon className={isLoading ? 'animate-spin' : undefined} />
