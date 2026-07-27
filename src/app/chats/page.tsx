@@ -3,56 +3,155 @@
 import { api } from '~/trpc/react'
 import { Card, CardContent, CardHeader, CardTitle } from '~/components/ui/card'
 import { Input } from '~/components/ui/input'
-import { MessageSquare, Search } from 'lucide-react'
+import { Button } from '~/components/ui/button'
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '~/components/ui/dialog'
+import { MessageSquare, Search, Plus, Hash } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { toast } from '~/hooks/use-toast'
 import { formatDistanceToNow } from 'date-fns'
 import { SidebarTrigger, useSidebar } from '~/components/ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
-import { ThemeToggle } from '~/components/tiptap-templates/simple/theme-toggle'
+
+// A row in the chat list — either a file chat or a standalone conversation.
+type ChatListItem = {
+    key: string
+    href: string
+    name: string
+    lastContent: string | null
+    lastAt: Date | null
+    isStandalone: boolean
+}
 
 export default function ChatsPage() {
+    const router = useRouter()
+    const utils = api.useUtils()
+
     const {
         data: recentChats = [],
         isLoading,
         error,
     } = api.chat.getRecentChats.useQuery()
-    const [searchQuery, setSearchQuery] = useState('')
-    const isMobile = useMobile()
-    const { state } = useSidebar();
+    const { data: conversations = [] } = api.chat.getConversations.useQuery()
 
-    // Filter chats based on search query
-    const filteredChats = (recentChats || []).filter(
-        (chat) =>
-            chat?.file?.name
-                ?.toLowerCase()
-                .includes(searchQuery.toLowerCase()) ||
-            chat?.lastMessage?.content
-                ?.toLowerCase()
+    const [searchQuery, setSearchQuery] = useState('')
+    const [isNewChatOpen, setIsNewChatOpen] = useState(false)
+    const [newChatTitle, setNewChatTitle] = useState('')
+
+    const isMobile = useMobile()
+    const { state } = useSidebar()
+
+    const createConversation = api.chat.createConversation.useMutation({
+        onSuccess: (conversation) => {
+            setIsNewChatOpen(false)
+            setNewChatTitle('')
+            void utils.chat.getConversations.invalidate()
+            if (conversation) router.push(`/chats/${conversation.id}`)
+        },
+    })
+
+    const handleCreate = () => {
+        if (!newChatTitle.trim() || createConversation.isPending) return
+        createConversation.mutate({ title: newChatTitle.trim() })
+    }
+
+    // Merge file chats + standalone conversations into one list.
+    const items: ChatListItem[] = [
+        ...(recentChats || []).map((chat) => ({
+            key: `file-${chat?.file?.id}`,
+            href: `/${chat?.file?.type}s/${chat?.file?.id}`,
+            name: chat?.file?.name || 'Untitled',
+            lastContent: chat?.lastMessage?.content ?? null,
+            lastAt: chat?.lastMessage?.createdAt
+                ? new Date(chat.lastMessage.createdAt)
+                : null,
+            isStandalone: false,
+        })),
+        ...(conversations || []).map((item) => ({
+            key: `convo-${item.conversation.id}`,
+            href: `/chats/${item.conversation.id}`,
+            name: item.conversation.title,
+            lastContent: item.lastMessage?.content ?? null,
+            lastAt: item.lastMessage?.createdAt
+                ? new Date(item.lastMessage.createdAt)
+                : new Date(item.conversation.createdAt),
+            isStandalone: true,
+        })),
+    ]
+
+    const filteredItems = items.filter(
+        (item) =>
+            item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (item.lastContent ?? '')
+                .toLowerCase()
                 .includes(searchQuery.toLowerCase())
     )
 
-    const sortedChats = filteredChats.sort(
-        (a, b) =>
-          new Date(b.lastMessage.createdAt).getTime() -
-          new Date(a.lastMessage.createdAt).getTime()
-      )
+    const sortedItems = filteredItems.sort(
+        (a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0)
+    )
 
     return (
         <div className="container mx-auto p-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="mb-6 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                     {(state === 'collapsed' || isMobile) && <SidebarTrigger />}
                     <div>
                         <h1 className="text-3xl font-bold tracking-tight">
                             Chats
                         </h1>
-                        <p className="text-muted-foreground mt-1">
+                        <p className="mt-1 text-muted-foreground">
                             Collaborate with your team in real-time
                         </p>
                     </div>
                 </div>
+
+                <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
+                    <DialogTrigger asChild>
+                        <Button className="gap-2">
+                            <Plus size={16} />
+                            New chat
+                        </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>New chat</DialogTitle>
+                        </DialogHeader>
+                        <p className="text-sm text-muted-foreground">
+                            Start a standalone chat that isn&apos;t tied to any
+                            file. Everyone in your workspace can join it.
+                        </p>
+                        <Input
+                            autoFocus
+                            placeholder="Chat name (e.g. General, Announcements)"
+                            value={newChatTitle}
+                            onChange={(e) => setNewChatTitle(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleCreate()
+                            }}
+                        />
+                        <DialogFooter>
+                            <Button
+                                onClick={handleCreate}
+                                disabled={
+                                    !newChatTitle.trim() ||
+                                    createConversation.isPending
+                                }
+                            >
+                                {createConversation.isPending
+                                    ? 'Creating…'
+                                    : 'Create chat'}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
             </div>
 
             <div className="mb-6">
@@ -79,45 +178,47 @@ export default function ChatsPage() {
                         </div>
                     )}
                     {isLoading && (
-                        <div className="flex items-center justify-center h-32">
+                        <div className="flex h-32 items-center justify-center">
                             <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
                         </div>
                     )}
                     {!isLoading && !error && (
                         <div className="divide-y">
-                            {sortedChats.map((chat) => (
+                            {sortedItems.map((item) => (
                                 <Link
-                                    key={chat?.file?.id}
-                                    href={`/${chat?.file?.type}s/${chat?.file?.id}`}
-                                    className="flex items-center gap-4 p-4 hover:bg-muted/50 cursor-pointer"
+                                    key={item.key}
+                                    href={item.href}
+                                    className="flex cursor-pointer items-center gap-4 p-4 hover:bg-muted/50"
                                 >
                                     <div className="flex-shrink-0">
-                                        <MessageSquare className="h-12 w-12 text-muted-foreground" />
+                                        {item.isStandalone ? (
+                                            <Hash className="h-12 w-12 text-primary" />
+                                        ) : (
+                                            <MessageSquare className="h-12 w-12 text-muted-foreground" />
+                                        )}
                                     </div>
-                                    <div className="flex-1 min-w-0">
+                                    <div className="min-w-0 flex-1">
                                         <div className="flex items-center justify-between">
-                                            <h3 className="font-medium truncate">
-                                                {chat?.file?.name || 'Untitled'}
+                                            <h3 className="truncate font-medium">
+                                                {item.name}
                                             </h3>
                                             <span className="text-xs text-muted-foreground">
-                                                {chat?.lastMessage?.createdAt &&
+                                                {item.lastAt &&
                                                     formatDistanceToNow(
-                                                        new Date(
-                                                            chat.lastMessage.createdAt
-                                                        ),
+                                                        item.lastAt,
                                                         { addSuffix: true }
                                                     )}
                                             </span>
                                         </div>
-                                        <p className="text-sm text-muted-foreground truncate">
-                                            {chat?.lastMessage?.content ||
+                                        <p className="truncate text-sm text-muted-foreground">
+                                            {item.lastContent ||
                                                 'No messages yet'}
                                         </p>
                                     </div>
                                 </Link>
                             ))}
 
-                            {filteredChats.length === 0 && (
+                            {sortedItems.length === 0 && (
                                 <div className="flex flex-col items-center justify-center py-12 text-center">
                                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                                         <MessageSquare
@@ -133,7 +234,7 @@ export default function ChatsPage() {
                                     <p className="mt-2 text-sm text-muted-foreground">
                                         {searchQuery
                                             ? `No chats match "${searchQuery}". Try a different search term.`
-                                            : 'Start a chat on any program item.'}
+                                            : 'Start a chat on any file, or click “New chat” for a standalone one.'}
                                     </p>
                                 </div>
                             )}

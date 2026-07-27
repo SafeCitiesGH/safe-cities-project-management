@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { eq, ne, and, desc, asc, sql, inArray, gt } from 'drizzle-orm'
+import { eq, ne, and, desc, asc, sql, inArray, gt, isNull } from 'drizzle-orm'
+import { TRPCError } from '@trpc/server'
 
 import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc'
 import {
@@ -9,6 +10,7 @@ import {
     notifications,
     filePermissions,
     effectivePermissions,
+    conversations,
 } from '~/server/db/schema'
 
 export const chatRouter = createTRPCRouter({
@@ -50,25 +52,58 @@ export const chatRouter = createTRPCRouter({
             return fileMessages
         }),
 
-    // Send a new message
+    // Send a new message — to a file chat (fileId) OR a standalone
+    // conversation (conversationId). Exactly one must be provided.
     sendMessage: protectedProcedure
         .input(
-            z.object({
-                fileId: z
-                    .number()
-                    .int()
-                    .positive('File ID must be a positive integer'),
-                content: z.string().min(1, 'Message content cannot be empty'),
-            })
+            z
+                .object({
+                    fileId: z.number().int().positive().optional(),
+                    conversationId: z.number().int().positive().optional(),
+                    content: z
+                        .string()
+                        .min(1, 'Message content cannot be empty'),
+                })
+                .refine(
+                    (data) =>
+                        (data.fileId != null) !==
+                        (data.conversationId != null),
+                    {
+                        message:
+                            'Provide exactly one of fileId or conversationId',
+                    }
+                )
         )
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
+
+            // Standalone conversation message: workspace-wide, no file
+            // permissions or per-file notifications to compute.
+            if (input.conversationId != null) {
+                const [message] = await ctx.db
+                    .insert(messages)
+                    .values({
+                        conversationId: input.conversationId,
+                        userId,
+                        content: input.content,
+                    })
+                    .returning()
+                return message
+            }
+
+            const fileId = input.fileId
+            if (fileId == null) {
+                throw new TRPCError({
+                    code: 'BAD_REQUEST',
+                    message: 'fileId or conversationId is required',
+                })
+            }
 
             // 1. Insert the message
             const [message] = await ctx.db
                 .insert(messages)
                 .values({
-                    fileId: input.fileId,
+                    fileId,
                     userId,
                     content: input.content,
                 })
@@ -76,7 +111,7 @@ export const chatRouter = createTRPCRouter({
 
             // 2. Get page info
             const page = await ctx.db.query.files.findFirst({
-                where: eq(files.id, input.fileId),
+                where: eq(files.id, fileId),
                 columns: { name: true },
             })
 
@@ -91,7 +126,7 @@ export const chatRouter = createTRPCRouter({
 
             // 4. Get current user info for notifications
             const filePermittedUsers = await ctx.db.query.filePermissions.findMany({
-                where: eq(filePermissions.fileId, input.fileId),
+                where: eq(filePermissions.fileId, fileId),
                 columns: { userId: true },
             })
 
@@ -148,7 +183,7 @@ export const chatRouter = createTRPCRouter({
                 await ctx.db.insert(notifications).values(
                     Array.from(allUsers).map((u) => ({
                         userId: String(u),
-                        pageId: input.fileId,
+                        pageId: fileId,
                         content: `New message in ${pageName}: "${input.content.slice(0, 100)}"`,
                         type: 'chat',
                         read: false,
@@ -233,4 +268,114 @@ export const chatRouter = createTRPCRouter({
 
         return Object.values(chatsByFile)
     }),
+
+    // Create a standalone (file-less) conversation. Workspace-wide: any
+    // signed-in user can see and post in it.
+    createConversation: protectedProcedure
+        .input(
+            z.object({
+                title: z
+                    .string()
+                    .trim()
+                    .min(1, 'Chat name cannot be empty')
+                    .max(256),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const { userId } = ctx.auth
+            const [conversation] = await ctx.db
+                .insert(conversations)
+                .values({ title: input.title, createdBy: userId })
+                .returning()
+            return conversation
+        }),
+
+    // List standalone conversations with a last-message preview for the Chats page.
+    getConversations: protectedProcedure.query(async ({ ctx }) => {
+        const allConversations = await ctx.db.query.conversations.findMany({
+            orderBy: desc(conversations.updatedAt),
+        })
+        if (allConversations.length === 0) return []
+
+        const conversationIds = allConversations.map((c) => c.id)
+        const conversationMessages = await ctx.db
+            .select({
+                id: messages.id,
+                content: messages.content,
+                createdAt: messages.createdAt,
+                conversationId: messages.conversationId,
+                user: { id: users.id, email: users.email },
+            })
+            .from(messages)
+            .leftJoin(users, eq(messages.userId, users.id))
+            .where(inArray(messages.conversationId, conversationIds))
+            .orderBy(desc(messages.createdAt))
+
+        // First message seen per conversation is the most recent (desc order).
+        const lastByConversation: Record<number, (typeof conversationMessages)[number]> =
+            {}
+        for (const message of conversationMessages) {
+            if (
+                message.conversationId != null &&
+                !lastByConversation[message.conversationId]
+            ) {
+                lastByConversation[message.conversationId] = message
+            }
+        }
+
+        return allConversations.map((conversation) => ({
+            conversation,
+            lastMessage: lastByConversation[conversation.id] ?? null,
+        }))
+    }),
+
+    // Messages for a standalone conversation (mirrors getFileMessages).
+    getConversationMessages: protectedProcedure
+        .input(
+            z.object({
+                conversationId: z.number().int().positive(),
+                since: z.string().datetime().optional(),
+                limit: z.number().int().min(1).max(100).optional(),
+            })
+        )
+        .query(async ({ ctx, input }) => {
+            const whereParts = [
+                eq(messages.conversationId, input.conversationId),
+            ]
+            if (input.since) {
+                whereParts.push(gt(messages.createdAt, new Date(input.since)))
+            }
+
+            return ctx.db
+                .select({
+                    id: messages.id,
+                    content: messages.content,
+                    createdAt: messages.createdAt,
+                    updatedAt: messages.updatedAt,
+                    conversationId: messages.conversationId,
+                    userId: messages.userId,
+                    user: { id: users.id, email: users.email },
+                })
+                .from(messages)
+                .leftJoin(users, eq(messages.userId, users.id))
+                .where(and(...whereParts))
+                .orderBy(asc(messages.createdAt))
+                .limit(input.limit || 50)
+        }),
+
+    // A single conversation's metadata (for the conversation view header).
+    getConversation: protectedProcedure
+        .input(z.object({ conversationId: z.number().int().positive() }))
+        .query(async ({ ctx, input }) => {
+            const conversation = await ctx.db.query.conversations.findFirst({
+                where: eq(conversations.id, input.conversationId),
+            })
+            if (!conversation) {
+                throw new TRPCError({
+                    code: 'NOT_FOUND',
+                    message: 'Conversation not found',
+                })
+            }
+            return conversation
+        }),
 })
