@@ -3,6 +3,7 @@ import { eq, ne, and, desc, asc, sql, inArray, gt } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 
 import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc'
+import { type db } from '~/server/db'
 import {
     messages,
     files,
@@ -11,7 +12,30 @@ import {
     filePermissions,
     effectivePermissions,
     conversations,
+    conversationMembers,
 } from '~/server/db/schema'
+
+// Throws unless the user belongs to the conversation. Conversations are private
+// to their members, so every read/write goes through this.
+async function assertConversationMember(
+    database: typeof db,
+    conversationId: number,
+    userId: string
+) {
+    const membership = await database.query.conversationMembers.findFirst({
+        where: and(
+            eq(conversationMembers.conversationId, conversationId),
+            eq(conversationMembers.userId, userId)
+        ),
+        columns: { id: true },
+    })
+    if (!membership) {
+        throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You are not a member of this chat',
+        })
+    }
+}
 
 export const chatRouter = createTRPCRouter({
     // Get messages for a specific file (with optional since and limit for fast incremental fetching)
@@ -77,9 +101,13 @@ export const chatRouter = createTRPCRouter({
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
 
-            // Standalone conversation message: workspace-wide, no file
-            // permissions or per-file notifications to compute.
+            // Standalone conversation message: only members may post.
             if (input.conversationId != null) {
+                await assertConversationMember(
+                    ctx.db,
+                    input.conversationId,
+                    userId
+                )
                 const [message] = await ctx.db
                     .insert(messages)
                     .values({
@@ -269,8 +297,8 @@ export const chatRouter = createTRPCRouter({
         return Object.values(chatsByFile)
     }),
 
-    // Create a standalone (file-less) conversation. Workspace-wide: any
-    // signed-in user can see and post in it.
+    // Create a private conversation with the chosen members. The creator is
+    // always added, so a chat has at least one member.
     createConversation: protectedProcedure
         .input(
             z.object({
@@ -279,41 +307,70 @@ export const chatRouter = createTRPCRouter({
                     .trim()
                     .min(1, 'Chat name cannot be empty')
                     .max(256),
+                memberIds: z.array(z.string()).default([]),
             })
         )
         .mutation(async ({ ctx, input }) => {
             const { userId } = ctx.auth
+
             const [conversation] = await ctx.db
                 .insert(conversations)
                 .values({ title: input.title, createdBy: userId })
                 .returning()
+
+            if (!conversation) {
+                throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'Failed to create conversation',
+                })
+            }
+
+            // Creator + selected members, de-duplicated.
+            const memberIds = Array.from(
+                new Set([userId, ...input.memberIds])
+            )
+            await ctx.db.insert(conversationMembers).values(
+                memberIds.map((memberId) => ({
+                    conversationId: conversation.id,
+                    userId: memberId,
+                }))
+            )
+
             return conversation
         }),
 
-    // List standalone conversations with a last-message preview for the Chats page.
+    // List the conversations the current user is a member of, with a
+    // last-message preview and the member list (for display names).
     getConversations: protectedProcedure.query(async ({ ctx }) => {
-        const allConversations = await ctx.db.query.conversations.findMany({
+        const { userId } = ctx.auth
+
+        const myMemberships = await ctx.db.query.conversationMembers.findMany({
+            where: eq(conversationMembers.userId, userId),
+            columns: { conversationId: true },
+        })
+        const conversationIds = myMemberships.map((m) => m.conversationId)
+        if (conversationIds.length === 0) return []
+
+        const myConversations = await ctx.db.query.conversations.findMany({
+            where: inArray(conversations.id, conversationIds),
             orderBy: desc(conversations.updatedAt),
         })
-        if (allConversations.length === 0) return []
 
-        const conversationIds = allConversations.map((c) => c.id)
+        // Last message per conversation.
         const conversationMessages = await ctx.db
             .select({
-                id: messages.id,
                 content: messages.content,
                 createdAt: messages.createdAt,
                 conversationId: messages.conversationId,
-                user: { id: users.id, email: users.email },
             })
             .from(messages)
-            .leftJoin(users, eq(messages.userId, users.id))
             .where(inArray(messages.conversationId, conversationIds))
             .orderBy(desc(messages.createdAt))
 
-        // First message seen per conversation is the most recent (desc order).
-        const lastByConversation: Record<number, (typeof conversationMessages)[number]> =
-            {}
+        const lastByConversation: Record<
+            number,
+            (typeof conversationMessages)[number]
+        > = {}
         for (const message of conversationMessages) {
             if (
                 message.conversationId != null &&
@@ -323,13 +380,38 @@ export const chatRouter = createTRPCRouter({
             }
         }
 
-        return allConversations.map((conversation) => ({
+        // Members per conversation (for showing participant names).
+        const memberRows = await ctx.db
+            .select({
+                conversationId: conversationMembers.conversationId,
+                userId: conversationMembers.userId,
+                name: users.name,
+                email: users.email,
+            })
+            .from(conversationMembers)
+            .leftJoin(users, eq(conversationMembers.userId, users.id))
+            .where(inArray(conversationMembers.conversationId, conversationIds))
+
+        const membersByConversation: Record<
+            number,
+            { userId: string; name: string | null; email: string | null }[]
+        > = {}
+        for (const row of memberRows) {
+            ;(membersByConversation[row.conversationId] ??= []).push({
+                userId: row.userId,
+                name: row.name,
+                email: row.email,
+            })
+        }
+
+        return myConversations.map((conversation) => ({
             conversation,
             lastMessage: lastByConversation[conversation.id] ?? null,
+            members: membersByConversation[conversation.id] ?? [],
         }))
     }),
 
-    // Messages for a standalone conversation (mirrors getFileMessages).
+    // Messages for a conversation — only if the caller is a member.
     getConversationMessages: protectedProcedure
         .input(
             z.object({
@@ -339,6 +421,12 @@ export const chatRouter = createTRPCRouter({
             })
         )
         .query(async ({ ctx, input }) => {
+            await assertConversationMember(
+                ctx.db,
+                input.conversationId,
+                ctx.auth.userId
+            )
+
             const whereParts = [
                 eq(messages.conversationId, input.conversationId),
             ]
@@ -363,10 +451,16 @@ export const chatRouter = createTRPCRouter({
                 .limit(input.limit || 50)
         }),
 
-    // A single conversation's metadata (for the conversation view header).
+    // A conversation's metadata + members — only if the caller is a member.
     getConversation: protectedProcedure
         .input(z.object({ conversationId: z.number().int().positive() }))
         .query(async ({ ctx, input }) => {
+            await assertConversationMember(
+                ctx.db,
+                input.conversationId,
+                ctx.auth.userId
+            )
+
             const conversation = await ctx.db.query.conversations.findFirst({
                 where: eq(conversations.id, input.conversationId),
             })
@@ -376,6 +470,19 @@ export const chatRouter = createTRPCRouter({
                     message: 'Conversation not found',
                 })
             }
-            return conversation
+
+            const memberRows = await ctx.db
+                .select({
+                    userId: conversationMembers.userId,
+                    name: users.name,
+                    email: users.email,
+                })
+                .from(conversationMembers)
+                .leftJoin(users, eq(conversationMembers.userId, users.id))
+                .where(
+                    eq(conversationMembers.conversationId, input.conversationId)
+                )
+
+            return { ...conversation, members: memberRows }
         }),
 })

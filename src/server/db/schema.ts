@@ -353,6 +353,29 @@ export const conversations = createTable('conversation', (d) => ({
     updatedAt: d.timestamp().defaultNow(),
 }))
 
+// Who's in a standalone conversation. A conversation is private to its members:
+// only these users can see it or post in it.
+export const conversationMembers = createTable(
+    'conversation_member',
+    (d) => ({
+        id: d.serial().primaryKey(),
+        conversationId: d
+            .integer()
+            .references(() => conversations.id, { onDelete: 'cascade' })
+            .notNull(),
+        userId: d
+            .text()
+            .references(() => users.id, { onDelete: 'cascade' })
+            .notNull(),
+        createdAt: d.timestamp().notNull().defaultNow(),
+    }),
+    (t) => [
+        index('conversation_member_conversation_idx').on(t.conversationId),
+        index('conversation_member_user_idx').on(t.userId),
+        unique('conversation_member_unq').on(t.conversationId, t.userId),
+    ]
+)
+
 export const messages = createTable(
     'message',
     (d) => ({

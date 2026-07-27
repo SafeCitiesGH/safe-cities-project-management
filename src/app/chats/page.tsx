@@ -19,6 +19,9 @@ import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { SidebarTrigger, useSidebar } from '~/components/ui/sidebar'
 import { useMobile } from '~/hooks/use-mobile'
+import { Checkbox } from '~/components/ui/checkbox'
+import { Avatar, AvatarFallback, AvatarImage } from '~/components/ui/avatar'
+import { useUser } from '@clerk/nextjs'
 
 // A row in the chat list — either a file chat or a standalone conversation.
 type ChatListItem = {
@@ -40,26 +43,52 @@ export default function ChatsPage() {
         error,
     } = api.chat.getRecentChats.useQuery()
     const { data: conversations = [] } = api.chat.getConversations.useQuery()
+    const { data: allUsers = [] } = api.user.getAllUsers.useQuery()
+    const { user: currentUser } = useUser()
 
     const [searchQuery, setSearchQuery] = useState('')
     const [isNewChatOpen, setIsNewChatOpen] = useState(false)
     const [newChatTitle, setNewChatTitle] = useState('')
+    const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
+        new Set()
+    )
 
     const isMobile = useMobile()
     const { state } = useSidebar()
+
+    // Everyone except the current user (the creator is always added on the server).
+    const selectableUsers = allUsers.filter((u) => u.id !== currentUser?.id)
+
+    const toggleMember = (id: string) => {
+        setSelectedMemberIds((prev) => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
+    }
 
     const createConversation = api.chat.createConversation.useMutation({
         onSuccess: (conversation) => {
             setIsNewChatOpen(false)
             setNewChatTitle('')
+            setSelectedMemberIds(new Set())
             void utils.chat.getConversations.invalidate()
             if (conversation) router.push(`/chats/${conversation.id}`)
         },
     })
 
     const handleCreate = () => {
-        if (!newChatTitle.trim() || createConversation.isPending) return
-        createConversation.mutate({ title: newChatTitle.trim() })
+        if (selectedMemberIds.size === 0 || createConversation.isPending) return
+        // Fall back to a name built from the chosen people if none was typed.
+        const derivedTitle = selectableUsers
+            .filter((u) => selectedMemberIds.has(u.id))
+            .map((u) => u.name || u.email)
+            .join(', ')
+        createConversation.mutate({
+            title: newChatTitle.trim() || derivedTitle || 'New chat',
+            memberIds: Array.from(selectedMemberIds),
+        })
     }
 
     // Merge file chats + standalone conversations into one list.
@@ -125,23 +154,62 @@ export default function ChatsPage() {
                             <DialogTitle>New chat</DialogTitle>
                         </DialogHeader>
                         <p className="text-sm text-muted-foreground">
-                            Start a standalone chat that isn&apos;t tied to any
-                            file. Everyone in your workspace can join it.
+                            Pick who to include. Only the people you choose (and
+                            you) can see and post in this chat.
                         </p>
                         <Input
-                            autoFocus
-                            placeholder="Chat name (e.g. General, Announcements)"
+                            placeholder="Chat name (optional)"
                             value={newChatTitle}
                             onChange={(e) => setNewChatTitle(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleCreate()
-                            }}
                         />
+
+                        <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-1">
+                            {selectableUsers.length === 0 && (
+                                <p className="p-3 text-sm text-muted-foreground">
+                                    No other people to add yet.
+                                </p>
+                            )}
+                            {selectableUsers.map((person) => (
+                                <label
+                                    key={person.id}
+                                    className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-muted/50"
+                                >
+                                    <Checkbox
+                                        checked={selectedMemberIds.has(
+                                            person.id
+                                        )}
+                                        onCheckedChange={() =>
+                                            toggleMember(person.id)
+                                        }
+                                    />
+                                    <Avatar className="h-7 w-7">
+                                        <AvatarImage
+                                            src={person.imageUrl ?? undefined}
+                                        />
+                                        <AvatarFallback>
+                                            {(person.name || person.email)?.[0]?.toUpperCase()}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium">
+                                            {person.name || person.email}
+                                        </p>
+                                        <p className="truncate text-xs text-muted-foreground">
+                                            {person.email}
+                                        </p>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+
                         <DialogFooter>
+                            <span className="mr-auto self-center text-xs text-muted-foreground">
+                                {selectedMemberIds.size} selected
+                            </span>
                             <Button
                                 onClick={handleCreate}
                                 disabled={
-                                    !newChatTitle.trim() ||
+                                    selectedMemberIds.size === 0 ||
                                     createConversation.isPending
                                 }
                             >

@@ -76,8 +76,10 @@ export default function ConversationPage() {
                     <h1 className="text-xl font-bold tracking-tight">
                         {conversation?.title ?? 'Chat'}
                     </h1>
-                    <p className="text-sm text-muted-foreground">
-                        Workspace chat
+                    <p className="max-w-md truncate text-sm text-muted-foreground">
+                        {conversation?.members
+                            ?.map((m) => m.name || m.email)
+                            .join(', ') || 'Private chat'}
                     </p>
                 </div>
             </div>
