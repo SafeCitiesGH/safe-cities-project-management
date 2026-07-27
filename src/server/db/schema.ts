@@ -671,6 +671,14 @@ export const usersRelations = relations(users, ({ many }) => ({
     comments: many(comments),
     formSubmissions: many(formSubmissions),
     googleCalendarConnections: many(googleCalendarConnections),
+    calendarEvents: many(calendarEvents),
+}))
+
+export const calendarEventsRelations = relations(calendarEvents, ({ one }) => ({
+    user: one(users, {
+        fields: [calendarEvents.userId],
+        references: [users.id],
+    }),
 }))
 
 export const googleCalendarConnectionsRelations = relations(
