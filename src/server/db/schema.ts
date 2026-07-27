@@ -315,6 +315,35 @@ export const googleCalendarConnections = createTable(
     ]
 )
 
+// Calendar events owned by this app. These exist regardless of whether the user
+// has connected Google. googleEventId is set only once an event has been pushed
+// to the user's Google Calendar, and is what stops a second push duplicating it.
+export const calendarEvents = createTable(
+    'calendar_event',
+    (d) => ({
+        id: d.serial().primaryKey(),
+        userId: d
+            .text()
+            .notNull()
+            .references(() => users.id, { onDelete: 'cascade' }),
+        title: d.varchar({ length: 512 }).notNull(),
+        description: d.text().notNull().default(''),
+        location: d.varchar({ length: 512 }).notNull().default(''),
+        startAt: d.timestamp({ withTimezone: true }).notNull(),
+        endAt: d.timestamp({ withTimezone: true }).notNull(),
+        googleEventId: d.varchar({ length: 1024 }),
+        createdAt: d.timestamp().defaultNow().notNull(),
+        updatedAt: d.timestamp().defaultNow().notNull(),
+    }),
+    (t) => [
+        index('calendar_event_user_start_idx').on(t.userId, t.startAt),
+        unique('calendar_event_user_google_event_unq').on(
+            t.userId,
+            t.googleEventId
+        ),
+    ]
+)
+
 // Standalone conversations: workspace-wide chats not tied to any file.
 export const conversations = createTable('conversation', (d) => ({
     id: d.serial().primaryKey(),
