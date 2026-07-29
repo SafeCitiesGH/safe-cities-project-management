@@ -90,9 +90,11 @@ grant execute on function public.safe_cities_can_join_doc(integer) to authentica
 -- Policies
 -- ----------------------------------------------------------------------------
 
--- RLS is already enabled on realtime.messages when Realtime Authorization is
--- used; this line is a harmless no-op if it is already on.
-alter table realtime.messages enable row level security;
+-- NOTE: do NOT `alter table realtime.messages enable row level security` here.
+-- That table is owned by an internal Supabase role, so the SQL Editor (running
+-- as `postgres`) is refused with "must be owner of table messages". RLS is
+-- already on for realtime.messages whenever Realtime Authorization is in use,
+-- so there is nothing to enable — only policies to attach.
 
 -- RECEIVE broadcast/presence on a doc channel the user may open.
 drop policy if exists "live_editing_read_doc_channels" on realtime.messages;
