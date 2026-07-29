@@ -353,7 +353,11 @@ export function SimpleEditor({
             TrailingNode,
             Link.configure({ openOnClick: false }),
         ],
-        content: collaborationEnabled ? undefined : initialContent || content,
+        // `??` not `||`: an EMPTY document must stay empty. With `||` a
+        // deliberately-cleared page fell back to the bundled Tiptap demo doc,
+        // and the auto-save then persisted that demo text as the user's
+        // content. The demo is only for /simple, which passes no initialContent.
+        content: collaborationEnabled ? undefined : (initialContent ?? content),
     })
 
     const bodyRect = useCursorVisibility({

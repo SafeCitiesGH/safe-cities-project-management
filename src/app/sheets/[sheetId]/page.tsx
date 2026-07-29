@@ -32,6 +32,10 @@ export default function SheetPage() {
     const [currentSheetData, setCurrentSheetData] = useState<SheetData | null>(
         null
     )
+    // Bumped on version restore to rebuild the grid. The editor is bound to a
+    // Yjs document that does not react to `initialData` changing, so without a
+    // remount a restore was invisible (and then overwritten by the next save).
+    const [editorKey, setEditorKey] = useState(0)
     // Live editor state, so Download exports what's on screen (saves are
     // debounced, so the fetched content can lag behind edits).
     const [liveSheetData, setLiveSheetData] = useState<SheetData | null>(null)
@@ -192,6 +196,7 @@ export default function SheetPage() {
             ) {
                 setCurrentSheetData(restoredData)
                 setLiveSheetData(restoredData)
+                setEditorKey((key) => key + 1)
                 toast({
                     title: '✅ Version restored',
                     description:
@@ -231,17 +236,29 @@ export default function SheetPage() {
                 which is what makes the sticky header row work */}
             <div className="flex-1 min-h-0">
                 <SheetEditor
+                    key={editorKey}
                     initialData={sheetDataToUse}
                     initialYjsState={
-                        sheet.content && 'yjsState' in sheet.content
-                            ? (sheet.content.yjsState ?? null)
-                            : null
+                        // After a restore the canonical Yjs state has been
+                        // cleared server-side; force null so the rebuilt grid
+                        // re-seeds from the restored rows instead of the copy
+                        // this page fetched earlier.
+                        editorKey > 0
+                            ? null
+                            : sheet.content && 'yjsState' in sheet.content
+                              ? (sheet.content.yjsState ?? null)
+                              : null
                     }
                     sheetId={sheetId}
                     sheetName={sheet.name}
                     readOnly={isReadOnly}
                     realtimeDocumentId={
-                        LIVE_EDITING_ENABLED ? sheetId : undefined
+                        // Password-protected files stay off the realtime
+                        // channel — see the note in the page view and
+                        // supabase/live-editing-policies.sql.
+                        LIVE_EDITING_ENABLED && !sheet.isPasswordProtected
+                            ? sheetId
+                            : undefined
                     }
                     permission={userPermission ?? 'view'}
                     syncMetadata={

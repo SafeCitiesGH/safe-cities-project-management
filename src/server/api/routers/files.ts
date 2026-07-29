@@ -11,11 +11,7 @@ import {
 } from 'drizzle-orm'
 import { z } from 'zod'
 
-import {
-    createTRPCRouter,
-    publicProcedure,
-    protectedProcedure,
-} from '~/server/api/trpc'
+import { createTRPCRouter, protectedProcedure } from '~/server/api/trpc'
 import {
     files,
     pageContent,
@@ -242,8 +238,13 @@ export const filesRouter = createTRPCRouter({
             return file ? stripPasswordHash(file) : file
         }),
 
-    // Get file tree structure
-    getFileTree: publicProcedure.query(async ({ ctx }) => {
+    // Get file tree structure.
+    // Sign-in required: /api/* bypasses the Clerk middleware (see
+    // src/middleware.ts), so a publicProcedure here let anyone on the internet
+    // enumerate every file and folder name in the workspace.
+    // NOTE: this returns the WHOLE tree to any signed-in user — use
+    // getFilteredFileTree for anything user-facing.
+    getFileTree: protectedProcedure.query(async ({ ctx }) => {
         const allFiles = await ctx.db.query.files.findMany({
             orderBy: [asc(files.order), asc(files.name)],
             columns: {
@@ -714,11 +715,17 @@ export const filesRouter = createTRPCRouter({
                     changeDescription: 'Auto-saved version',
                 })
 
-                // PRUNE: Keep only the 30 most recent versions
+                // PRUNE: Keep only the 30 most recent versions. Ordered by
+                // recency (not version number) — de-duplicated rows keep their
+                // original position in the numbering, so pruning by version
+                // could drop an entry the user had just touched.
                 const allVersions =
                     await ctx.db.query.pageVersionHistory.findMany({
                         where: eq(pageVersionHistory.fileId, input.fileId),
-                        orderBy: desc(pageVersionHistory.version),
+                        orderBy: [
+                            desc(pageVersionHistory.createdAt),
+                            desc(pageVersionHistory.id),
+                        ],
                         columns: { id: true },
                     })
                 if (allVersions.length > 30) {
@@ -951,11 +958,15 @@ export const filesRouter = createTRPCRouter({
                     changeDescription: 'Auto-saved version',
                 })
 
-                // PRUNE: Keep only the 30 most recent versions
+                // PRUNE: Keep only the 30 most recent versions (by recency —
+                // see the note in updatePageContent).
                 const allVersions =
                     await ctx.db.query.pageVersionHistory.findMany({
                         where: eq(pageVersionHistory.fileId, input.fileId),
-                        orderBy: desc(pageVersionHistory.version),
+                        orderBy: [
+                            desc(pageVersionHistory.createdAt),
+                            desc(pageVersionHistory.id),
+                        ],
                         columns: { id: true },
                     })
                 if (allVersions.length > 30) {
@@ -1118,8 +1129,8 @@ export const filesRouter = createTRPCRouter({
             }
         }),
 
-    // Get all files of a specific type
-    getByType: publicProcedure
+    // Get all files of a specific type. Sign-in required (see getFileTree).
+    getByType: protectedProcedure
         .input(
             z.object({
                 type: z.enum([
@@ -1140,7 +1151,8 @@ export const filesRouter = createTRPCRouter({
         }),
 
     // Get all files created in the last 30 days
-    getPagesCreatedInLast30Days: publicProcedure.query(async ({ ctx }) => {
+    // Sign-in required (see getFileTree).
+    getPagesCreatedInLast30Days: protectedProcedure.query(async ({ ctx }) => {
         const thirtyDaysAgo = new Date()
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
@@ -1218,7 +1230,8 @@ export const filesRouter = createTRPCRouter({
         }),
 
     // Get most recent update times for multiple programs and their descendants
-    getProgramUpdateTimes: publicProcedure
+    // Sign-in required (see getFileTree).
+    getProgramUpdateTimes: protectedProcedure
         .input(z.object({ programIds: z.array(z.number()) }))
         .query(async ({ ctx, input }) => {
             const updateTimes: Record<number, Date | null> = {}
@@ -1420,7 +1433,13 @@ export const filesRouter = createTRPCRouter({
                         columns: { id: true, name: true, email: true },
                     },
                 },
-                orderBy: desc(pageVersionHistory.version),
+                // Newest first by recency. The list shows each entry's
+                // timestamp, so ordering by version number instead made the
+                // list look shuffled once de-duplication reused older rows.
+                orderBy: [
+                    desc(pageVersionHistory.createdAt),
+                    desc(pageVersionHistory.id),
+                ],
                 limit: input.limit,
                 offset: input.offset,
             })
@@ -1475,7 +1494,13 @@ export const filesRouter = createTRPCRouter({
                         columns: { id: true, name: true, email: true },
                     },
                 },
-                orderBy: desc(pageVersionHistory.version),
+                // Newest first by recency. The list shows each entry's
+                // timestamp, so ordering by version number instead made the
+                // list look shuffled once de-duplication reused older rows.
+                orderBy: [
+                    desc(pageVersionHistory.createdAt),
+                    desc(pageVersionHistory.id),
+                ],
                 limit: input.limit,
                 offset: input.offset,
             })
@@ -1573,12 +1598,21 @@ export const filesRouter = createTRPCRouter({
 
             const newVersion = currentVersion + 1
 
-            // Restore the content based on file type
+            // Restore the content based on file type.
+            //
+            // yjsState is cleared deliberately. With live editing on, the
+            // editor binds to the canonical Yjs (CRDT) state and IGNORES the
+            // HTML/JSON column, so restoring content alone changed nothing the
+            // user could see — not even after a reload — and the next auto-save
+            // wrote the un-restored CRDT straight back over it. Nulling it makes
+            // the next open re-seed the CRDT from the restored content
+            // (see seedYjsStateIfAbsent / seedSheetYjsStateIfAbsent).
             if (file.type === 'sheet') {
                 await ctx.db
                     .update(sheetContent)
                     .set({
                         content: versionToRestore.content,
+                        yjsState: null,
                         version: newVersion,
                         updatedAt: new Date(),
                     })
@@ -1588,6 +1622,7 @@ export const filesRouter = createTRPCRouter({
                     .update(pageContent)
                     .set({
                         content: versionToRestore.content,
+                        yjsState: null,
                         version: newVersion,
                         updatedAt: new Date(),
                     })
@@ -1603,7 +1638,14 @@ export const filesRouter = createTRPCRouter({
                 })
                 .where(eq(files.id, input.fileId))
 
-            return { restoredToVersion: versionToRestore.version }
+            // Return the restored content itself. The client used to look the
+            // version back up by its version NUMBER, which is not unique in this
+            // table (only (fileId, contentHash) is), so it could re-apply the
+            // wrong entry.
+            return {
+                restoredToVersion: versionToRestore.version,
+                content: versionToRestore.content,
+            }
         }),
 
     // Keep old endpoint for backward compatibility

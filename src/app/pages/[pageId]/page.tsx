@@ -250,6 +250,10 @@ export default function PageView() {
                 if (!res.ok) return
                 const data = await res.json()
                 if (data.lastUpdated && data.lastUpdated !== lastSyncedAt) {
+                    // Password-protected pages return no content here, so only
+                    // adopt a real string — assigning undefined would blank the
+                    // editor and the next auto-save would persist the blank.
+                    if (typeof data.content !== 'string') return
                     // Only update local content if the user hasn't typed since last sync
                     if (content === lastSyncedContent) {
                         setContent(data.content)
@@ -269,10 +273,26 @@ export default function PageView() {
         return () => clearInterval(interval)
     }, [pageId, lastSyncedAt, content, lastSyncedContent])
 
-    // Handle version restoration
+    // Handle version restoration.
+    // The editor is bound to a Yjs document, which does not react to
+    // `initialContent` changing — so the restored content only shows up if the
+    // editor is rebuilt. `editorKey` forces that remount, and the refs are
+    // resynced so the pending-save flush on unmount can't write the
+    // pre-restore content back over the restore.
+    const [editorKey, setEditorKey] = useState(0)
     const handleVersionRestore = useCallback((restoredContent: string) => {
+        if (contentUpdateTimerRef.current) {
+            clearTimeout(contentUpdateTimerRef.current)
+            contentUpdateTimerRef.current = null
+        }
         setContent(restoredContent)
         setLastSyncedContent(restoredContent)
+        latestContentRef.current = restoredContent
+        lastPersistedContentRef.current = restoredContent
+        // The server cleared the canonical Yjs state, so the rebuilt editor
+        // re-seeds it from the restored HTML.
+        latestYjsStateRef.current = undefined
+        setEditorKey((key) => key + 1)
         setIsVersionHistoryOpen(false)
         toast({
             title: 'Version restored',
@@ -427,15 +447,30 @@ export default function PageView() {
 
             <div className="flex-1 min-h-0 flex flex-col justify-start items-center bg-background">
                 <SimpleEditor
+                    key={editorKey}
                     initialContent={content}
                     initialYjsState={
-                        page?.content && 'yjsState' in page.content
-                            ? (page.content.yjsState ?? null)
-                            : null
+                        // After a restore the canonical Yjs state has been
+                        // cleared server-side; force null here too so the
+                        // rebuilt editor re-seeds from the restored HTML
+                        // instead of the copy this page fetched earlier.
+                        editorKey > 0
+                            ? null
+                            : page?.content && 'yjsState' in page.content
+                              ? (page.content.yjsState ?? null)
+                              : null
                     }
                     readOnly={isReadOnly}
                     realtimeDocumentId={
-                        LIVE_EDITING_ENABLED ? pageId : undefined
+                        // Password-protected files stay off the realtime
+                        // channel: the Supabase RLS policy cannot tell whether
+                        // this user actually entered the password, so it
+                        // refuses those channels (see
+                        // supabase/live-editing-policies.sql). Asking anyway
+                        // would just show "Live editing: unavailable".
+                        LIVE_EDITING_ENABLED && !page.isPasswordProtected
+                            ? pageId
+                            : undefined
                     }
                     permission={userPermission ?? 'view'}
                     onUpdate={handleContentChange}

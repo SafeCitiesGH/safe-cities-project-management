@@ -59,16 +59,17 @@ export function VersionHistory({
                         title: 'Version restored',
                         description: `Successfully restored to version ${data.restoredToVersion}`,
                     })
-                    // Find the restored version and pass its content to onRestore
-                    const restoredVersion = versions?.find(
-                        (v) => v.version === data.restoredToVersion
-                    )
-                    if (restoredVersion && onRestore) {
-                        onRestore(restoredVersion.content)
-                    }
+                    // The server returns the content it actually wrote. Looking
+                    // it back up locally by version number was unreliable —
+                    // version numbers repeat across history entries.
+                    onRestore?.(data.content)
                     onClose()
-                    // Invalidate relevant queries
-                    utils.files.getById.invalidate({ id: fileId })
+                    // Invalidate without an input filter: getById is keyed by
+                    // { id, expectedType, password }, so invalidating with a
+                    // partial input matched nothing and the page kept showing
+                    // the pre-restore content.
+                    void utils.files.getById.invalidate()
+                    void utils.files.getVersionHistory.invalidate({ fileId })
                 },
                 onError: (error) => {
                     toast({
@@ -97,7 +98,7 @@ export function VersionHistory({
                             description:
                                 'Version successfully deleted from history',
                         })
-                        refetch()
+                        void refetch()
                         setShowDeleteConfirm(false)
                         setVersionToDelete(null)
                     },
@@ -191,7 +192,13 @@ export function VersionHistory({
                     content={previewContent}
                     fileType={fileType}
                     isOpen={showPreview}
-                    onClose={() => setShowPreview(false)}
+                    onClose={() => {
+                        setShowPreview(false)
+                        // Drop the content too, otherwise the preview (and the
+                        // editor instance inside it) stays mounted invisibly
+                        // and the next preview can flash the previous version.
+                        setPreviewContent(null)
+                    }}
                 />
             )}
 
