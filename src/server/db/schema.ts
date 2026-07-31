@@ -344,11 +344,48 @@ export const calendarEvents = createTable(
     ]
 )
 
+// Standalone conversations: workspace-wide chats not tied to any file.
+export const conversations = createTable('conversation', (d) => ({
+    id: d.serial().primaryKey(),
+    title: d.varchar({ length: 256 }).notNull(),
+    createdBy: d.text().references(() => users.id, { onDelete: 'set null' }),
+    createdAt: d.timestamp().notNull().defaultNow(),
+    updatedAt: d.timestamp().defaultNow(),
+}))
+
+// Who's in a standalone conversation. A conversation is private to its members:
+// only these users can see it or post in it.
+export const conversationMembers = createTable(
+    'conversation_member',
+    (d) => ({
+        id: d.serial().primaryKey(),
+        conversationId: d
+            .integer()
+            .references(() => conversations.id, { onDelete: 'cascade' })
+            .notNull(),
+        userId: d
+            .text()
+            .references(() => users.id, { onDelete: 'cascade' })
+            .notNull(),
+        createdAt: d.timestamp().notNull().defaultNow(),
+    }),
+    (t) => [
+        index('conversation_member_conversation_idx').on(t.conversationId),
+        index('conversation_member_user_idx').on(t.userId),
+        unique('conversation_member_unq').on(t.conversationId, t.userId),
+    ]
+)
+
 export const messages = createTable(
     'message',
     (d) => ({
         id: d.serial().primaryKey(),
+        // A message belongs to EITHER a file (file chat) or a conversation
+        // (standalone chat). Both are nullable; exactly one is set.
         fileId: d.integer().references(() => files.id, { onDelete: 'cascade' }),
+        conversationId: d
+            .integer()
+            .references(() => conversations.id, { onDelete: 'cascade' }),
         userId: d.text().references(() => users.id, { onDelete: 'cascade' }),
         content: d.text().notNull(),
         createdAt: d.timestamp().notNull().defaultNow(),
@@ -356,6 +393,7 @@ export const messages = createTable(
     }),
     (t) => [
         index('message_file_idx').on(t.fileId),
+        index('message_conversation_idx').on(t.conversationId),
         index('message_user_idx').on(t.userId),
     ]
 )

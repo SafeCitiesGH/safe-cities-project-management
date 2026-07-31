@@ -1,156 +1,334 @@
 # Safe Cities Project Management Platform
 
-A modern collaborative workspace platform designed specifically for Safe Cities South Africa Non-Profit organization. This Notion-inspired project management system streamlines programme coordination, enhances team collaboration, and simplifies content management for non-profit operations.
+<p align="center">
+  <img src="docs/logo.png" alt="Safe Cities Dashboard">
+</p>
+
+<p align="center">
+  <strong>A modern collaborative workspace built for Safe Cities South Africa.</strong>
+</p>
+
+<p align="center">
+Streamline programme management, document collaboration, user administration, and scheduling through a secure, intuitive, and centralized platform.
+</p>
+
+---
 
 ## 🌍 About Safe Cities South Africa
 
-Safe Cities South Africa is a non-profit organization dedicated to creating safer communities across South Africa. This platform was developed to address the unique organizational challenges faced by non-profit teams, providing an intuitive workspace that combines project management, content creation, and team communication.
+Safe Cities South Africa is a non-profit organization dedicated to creating safer communities across South Africa. This platform was developed as part of the **EDU Africa Software Engineering Internship** to help the organization manage programmes, documents, and collaboration more efficiently through a modern web application.
 
-## Screenshots
+---
 
-![image](https://github.com/user-attachments/assets/4e059539-ee92-46eb-bcb6-071b627dbefa)
-![image](https://github.com/user-attachments/assets/5150956d-3a0b-4f73-8315-8dd48f5e7b2a)
-![image](https://github.com/user-attachments/assets/3350c3fd-0c6b-4811-a9db-85c9784ba5d5)
+# 🎯 Project Overview
 
-## 🎯 Project Overview
+The Safe Cities Project Management Platform is an all-in-one workspace inspired by collaborative productivity tools like Notion while being tailored specifically to the operational needs of Safe Cities.
 
-This platform serves as a comprehensive workspace solution that combines the best aspects of Notion's content editing capabilities with project management features tailored for non-profit organizations. The system enables teams to organize programmes hierarchically, collaborate in real-time, and maintain clear communication channels across all projects.
+The platform centralizes programme management, secure document storage, team collaboration, user administration, and Google Calendar scheduling into one easy-to-use application.
 
-### Key Objectives
+## Key Objectives
 
-- **Streamline Programme Management**: Replace fragmented tools with a unified workspace
-- **Enhance Collaboration**: Enable seamless communication between team members
-- **Simplify Content Creation**: Provide intuitive editing tools accessible to all skill levels
-- **Improve Organization**: Implement structured programme and page hierarchies
-- **Ensure Security**: Role-based permissions for viewing, commenting, and editing
+- Streamline programme management through a centralized workspace
+- Improve collaboration between team members
+- Simplify content creation and document management
+- Enhance security with authentication and role-based permissions
+- Provide an intuitive and responsive user experience
 
-## 🚀 Features
+---
 
-### Core Functionality
-- **Hierarchical Programme Structure**: Organize programmes and pages in nested structures
-- **Notion-Style Editor**: WYSIWYG markdown editor with keyboard shortcuts and drag-and-drop functionality
-- **Real-time Collaboration**: Live editing with conflict resolution
-- **File Management**: Upload and embed images, documents, and media files
-- **Per-Page Permissions**: Granular access control (View/Comment/Edit) based on user roles
+# 🚀 Features
 
-### Communication & Collaboration
-- **Page-Level Chat**: Dedicated chat rooms for each page with @mention functionality
-- **Global Chat Hub**: Centralized access to all chat conversations
-- **Notification System**: Real-time alerts for mentions, comments, and permission changes
-- **Activity Feed**: Track recent edits, new pages, and programme updates
+## 📁 Workspace & Programme Management
 
-### Advanced Features (Planned)
-- **Form Builder**: Create forms that automatically update connected spreadsheets
-- **Task Management**: Assign and track tasks at the page level
-- **Calendar Integration**: Schedule and view events across programmes
-- **Offline Support**: PWA capabilities for offline content editing
-- **Data Export**: Backup content to .docx, .png, and .csv formats
+- Hierarchical programme and folder organization
+- Create pages, folders, forms, and spreadsheets
+- Rich text document editing
+- File uploads and previews
+- Search functionality
+- Organized workspace navigation
 
-## 🛠️ Technology Stack
+## 🔐 Secure Authentication & Permissions
 
-### Frontend & Backend
-- **Next.js 14**: Full-stack React framework with App Router
-- **TypeScript**: Type-safe development environment
-- **Tailwind CSS**: Utility-first CSS framework for responsive design
-- **tRPC**: End-to-end typesafe APIs
+- Clerk Authentication
+- Protected routes
+- Secure user sessions
+- Role-based permissions
+- Password-protected documents
 
-### Database & Authentication
-- **Drizzle ORM**: Type-safe database interactions
-- **Supabase**: PostgreSQL database with real-time capabilities
-- **Clerk**: User authentication and session management
+## 📅 Google Calendar Integration
 
-## 🏗️ Architecture
+- Connect a personal Google Calendar
+- Synchronize existing calendar events
+- Create new calendar events
+- Delete events
+- Manage schedules directly inside the application
 
-The platform follows a modern full-stack architecture with:
+## 👥 Collaboration
 
-- **Server-Side Rendering**: Next.js App Router for optimal performance
-- **Type Safety**: End-to-end TypeScript implementation
-- **Component-Based Design**: Reusable UI components with shadcn/ui
-- **API Layer**: tRPC for type-safe client-server communication
+- User management
+- Activity tracking
+- Notifications
+- Version history
+- Restore previous document versions
 
-## 👥 User Personas
+## 🎨 Modern User Experience
+
+- Responsive design
+- Light and Dark Mode
+- Modern dashboard
+- Clean and intuitive interface
+- Optimized navigation
+
+---
+
+# 📸 Screenshots
+
+## Dashboard
+
+The dashboard provides administrators with a centralized overview of programmes, workspace activity, and organizational resources.
+
+<p align="center">
+  <img src="docs/dashboard.png" alt="Dashboard">
+</p>
+
+---
+
+## Google Calendar Integration
+
+Connect your Google Calendar to synchronize existing events and manage schedules directly inside the platform.
+
+<p align="center">
+  <img src="docs/calendar.png" alt="Google Calendar">
+</p>
+
+---
+
+## Password Protected Files
+
+Secure confidential documents by requiring a password before files can be accessed.
+
+<p align="center">
+  <img src="docs/password-protection.png" alt="Password Protected Files" width="450">
+</p>
+
+---
+
+# 🛠 Technology Stack
+
+## Frontend
+
+- Next.js 15
+- React
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
+
+## Backend
+
+- Next.js API Routes
+- Node.js
+- Drizzle ORM
+
+## Database
+
+- PostgreSQL
+- Supabase
+
+## Authentication
+
+- Clerk
+
+## APIs & Integrations
+
+- Google Calendar API
+- Google OAuth 2.0
+
+## Deployment
+
+- Vercel
+
+---
+
+# 🏗 Architecture
+
+The application follows a modern full-stack architecture designed for scalability, security, and maintainability.
+
+```text
+                    User
+                      │
+                      ▼
+             Next.js Frontend
+                      │
+      ┌───────────────┼────────────────┐
+      │               │                │
+      ▼               ▼                ▼
+   Clerk        Google OAuth      API Routes
+                                           │
+                                           ▼
+                                    Drizzle ORM
+                                           │
+                                           ▼
+                              PostgreSQL (Supabase)
+```
+
+### Architecture Highlights
+
+- Server-side rendering with Next.js App Router
+- End-to-end TypeScript
+- Component-based UI using shadcn/ui
+- Secure authentication through Clerk
+- PostgreSQL database managed with Drizzle ORM
+- Google Calendar integration using OAuth 2.0
+
+---
+
+# 👥 User Personas
 
 ### Programme Coordinators
-- Need to organize and oversee multiple programmes
-- Require permission management capabilities
-- Focus on high-level programme structure and team coordination
 
-### Content Contributors
-- Create and edit programme content
-- Participate in discussions and provide updates
-- Need intuitive editing tools with minimal learning curve
+- Organize and oversee multiple programmes
+- Manage permissions and users
+- Coordinate team activities
 
-### Community Members
-- View programme information and progress
-- Participate in relevant discussions
-- Access shared resources and documents
+### Team Members
 
-## 🚀 Getting Started
+- Create and edit documents
+- Collaborate on shared projects
+- Manage programme content
 
-### Prerequisites
-- Node.js 18+ 
-- npm or yarn
+### Organization Administrators
+
+- Manage users and permissions
+- Monitor organizational activity
+- Maintain programme structure
+
+---
+
+# 🚀 Getting Started
+
+## Prerequisites
+
+- Node.js 18 or later
+- npm
 - PostgreSQL database (Supabase recommended)
 
-### Installation
+---
 
-1. Clone the repository:
+## Installation
+
+### Clone the repository
+
 ```bash
-git clone https://github.com/rdg922/safe-cities-project-management.git
+git clone https://github.com/SafeCitiesGH/safe-cities-project-management.git
+
 cd safe-cities-project-management
 ```
 
-2. Install dependencies:
+---
+
+### Install dependencies
+
 ```bash
 npm install
 ```
 
-3. Set up environment variables:
-```bash
-cp .env.example .env.local
-# Configure your database, authentication, and other services
+---
+
+### Configure Environment Variables
+
+Create a `.env.local` file in the project root.
+
+```env
+# Database
+DATABASE_URL=
+
+# Clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+CLERK_WEBHOOK_SIGNING_SECRET=
+
+# Supabase
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+
+# Google Calendar
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+GOOGLE_CALENDAR_ID=
+GOOGLE_REFRESH_TOKEN=
 ```
 
-4. Run database migrations:
+> Never commit your `.env.local` file or API keys to GitHub.
+
+---
+
+### Push the database schema
+
 ```bash
-npm run db:push
+npx drizzle-kit push
 ```
 
-5. Start the development server:
+---
+
+### Run the development server
+
 ```bash
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000`.
+The application will be available at:
 
-## 🤝 Contributing
-
-This project is developed for Safe Cities South Africa. For contribution guidelines and development standards, please refer to our internal documentation.
-
-## 📄 License
-
-MIT License
-
-Copyright (c) 2025 Safe Cities South Africa
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+```
+http://localhost:3000
+```
 
 ---
 
-*Built with ❤️ for South African communities*
+# ✅ Current Features
+
+| Feature | Status |
+|----------|:------:|
+| Secure Authentication | ✅ |
+| Programme Management | ✅ |
+| File Management | ✅ |
+| Password Protected Files | ✅ |
+| Google Calendar Integration | ✅ |
+| User Management | ✅ |
+| Notifications | ✅ |
+| Version History | ✅ |
+| Responsive Design | ✅ |
+| Light & Dark Mode | ✅ |
+
+---
+
+# 🔮 Future Improvements
+
+- AI-powered document assistance
+- Email notifications
+- Mobile application
+- Advanced analytics dashboard
+- Real-time collaborative editing
+- Expanded administrative permissions
+
+---
+
+# 🤝 Contributing
+
+This project was developed in collaboration with **Safe Cities South Africa** through the **EDU Africa Software Engineering Internship**.
+
+Contributions are welcome through pull requests or by opening an issue to discuss proposed improvements.
+
+---
+
+# 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+<p align="center">
+Built with ❤️ using Next.js, TypeScript, PostgreSQL, Supabase, Clerk, and the Google Calendar API.
+</p>
