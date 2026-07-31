@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     FileText,
@@ -90,6 +90,7 @@ export function NewFileDialog({
     const [confirmPassword, setConfirmPassword] = useState('')
     const [showPassword, setShowPassword] = useState(false)
     const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+    const [nameError, setNameError] = useState<string | null>(null)
 
     const MIN_PASSWORD_LENGTH = 4
     const passwordsMatch = password === confirmPassword
@@ -154,41 +155,50 @@ export function NewFileDialog({
         },
     })
 
+    // Reset the form ONLY when the dialog transitions closed -> open.
+    //
+    // This used to re-run on every dependency change while the dialog stayed
+    // open, and two of those dependencies move on their own: `selectedType`
+    // (the effect sets it itself) and `canCreateProgramme` (false until the
+    // profile query resolves, then true for admins). A mid-session run cleared
+    // the name and flipped `passwordProtect` off, which UNMOUNTED the password
+    // inputs while the user was typing in them — focus then fell back to the
+    // first field in the dialog, the now-empty file name, so the rest of the
+    // password was typed into the name. The name is what becomes the <h1> at
+    // the top of a new document, which is how the password ended up there.
+    const wasOpenRef = useRef(false)
     useEffect(() => {
-        if (open) {
-            // Reset all form state when dialog opens
-            setFileName(defaultName)
-            setSelectedParentId(parentId ?? null)
-            setSelectedFile(null)
-            setIsUploading(false)
-            setPasswordProtect(false)
-            setPassword('')
-            setConfirmPassword('')
-            setShowPassword(false)
-            setShowConfirmPassword(false)
-
-            // Set file type only if provided and different from current
-            if (fileType && fileType !== selectedType) {
-                // Only allow programme type if user has permission
-                if (fileType === 'programme' && !canCreateProgramme) {
-                    setSelectedType('page') // Default to page if programme not allowed
-                } else {
-                    setSelectedType(fileType)
-                }
-            }
-            // If current selected type is programme but user lost permission, reset to page
-            else if (selectedType === 'programme' && !canCreateProgramme) {
-                setSelectedType('page')
-            }
+        if (!open) {
+            wasOpenRef.current = false
+            return
         }
-    }, [
-        open,
-        fileType,
-        defaultName,
-        parentId,
-        selectedType,
-        canCreateProgramme,
-    ])
+        if (wasOpenRef.current) return
+        wasOpenRef.current = true
+
+        setFileName(defaultName)
+        setSelectedParentId(parentId ?? null)
+        setSelectedFile(null)
+        setIsUploading(false)
+        setPasswordProtect(false)
+        setPassword('')
+        setConfirmPassword('')
+        setShowPassword(false)
+        setShowConfirmPassword(false)
+        setNameError(null)
+
+        if (fileType) setSelectedType(fileType)
+    }, [open, fileType, defaultName, parentId])
+
+    // Programme creation is admin-only. This is checked separately from the
+    // reset above so it can react to the profile query resolving after the
+    // dialog is already open, and it is gated on the profile having actually
+    // loaded so it can't downgrade an admin on the initial undefined value.
+    useEffect(() => {
+        if (!userProfile) return
+        if (selectedType === 'programme' && !canCreateProgramme) {
+            setSelectedType('page')
+        }
+    }, [userProfile, canCreateProgramme, selectedType])
 
     const handleCreate = async () => {
         // Block submit if password protection is on but invalid
@@ -198,6 +208,18 @@ export function NewFileDialog({
             selectedType === 'programme' || selectedType === 'folder'
         const protectionPassword =
             passwordProtect && !isContainerType ? password : undefined
+
+        // Last line of defence against the password leaking into the document.
+        // A new page's title becomes the heading at the top of its content, so
+        // a name that matches the password would publish it to everyone who can
+        // open the file. Nothing legitimate names a file after its own password.
+        if (protectionPassword && fileName.trim() === protectionPassword) {
+            setNameError(
+                'The name matches the password. Passwords are never stored in the file name — please use a different name.'
+            )
+            return
+        }
+        setNameError(null)
 
         if (selectedType === 'upload') {
             if (!selectedFile) return
@@ -397,16 +419,26 @@ export function NewFileDialog({
                             <div className="relative">
                                 <Input
                                     id="file-name"
+                                    name="file-name"
+                                    // This field sits next to password inputs,
+                                    // so password managers try to treat it as
+                                    // the username of a login form and autofill
+                                    // it. Opt out of every manager we can.
+                                    autoComplete="off"
+                                    data-1p-ignore
+                                    data-lpignore="true"
+                                    data-form-type="other"
                                     value={fileName}
                                     onChange={(e) => {
                                         const value = e.target.value
                                         if (value.length <= 50) {
                                             setFileName(value)
+                                            if (nameError) setNameError(null)
                                         }
                                     }}
                                     placeholder={config.placeholder}
                                     className={
-                                        fileName.length === 50
+                                        fileName.length === 50 || nameError
                                             ? 'border-red-500'
                                             : ''
                                     }
@@ -426,6 +458,11 @@ export function NewFileDialog({
                             {fileName.length === 50 && (
                                 <p className="text-sm text-red-500 mt-1">
                                     Maximum character limit reached
+                                </p>
+                            )}
+                            {nameError && (
+                                <p className="text-sm text-red-500 mt-1">
+                                    {nameError}
                                 </p>
                             )}
                         </div>
@@ -558,12 +595,18 @@ export function NewFileDialog({
                                                         ? 'text'
                                                         : 'password'
                                                 }
+                                                name="file-protection-password"
                                                 value={password}
-                                                onChange={(e) =>
+                                                onChange={(e) => {
                                                     setPassword(e.target.value)
-                                                }
+                                                    if (nameError)
+                                                        setNameError(null)
+                                                }}
                                                 placeholder="Enter password"
                                                 autoComplete="new-password"
+                                                data-1p-ignore
+                                                data-lpignore="true"
+                                                data-form-type="other"
                                                 className="pr-10"
                                                 disabled={
                                                     createFileMutation.isPending
@@ -596,6 +639,7 @@ export function NewFileDialog({
                                                         ? 'text'
                                                         : 'password'
                                                 }
+                                                name="file-protection-password-confirm"
                                                 value={confirmPassword}
                                                 onChange={(e) =>
                                                     setConfirmPassword(
@@ -604,6 +648,9 @@ export function NewFileDialog({
                                                 }
                                                 placeholder="Confirm password"
                                                 autoComplete="new-password"
+                                                data-1p-ignore
+                                                data-lpignore="true"
+                                                data-form-type="other"
                                                 className="pr-10"
                                                 disabled={
                                                     createFileMutation.isPending

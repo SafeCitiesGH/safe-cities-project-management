@@ -44,13 +44,18 @@ export async function saveVersionHistoryWithDeduplication(
             })
 
         if (existingVersion) {
-            // Update the timestamp of the existing version instead of creating a duplicate
+            // Update the existing entry instead of creating a duplicate. The
+            // version number is bumped too: the row now represents the CURRENT
+            // occurrence of this content, and history is ordered/pruned by
+            // recency. Leaving the old (lower) number behind made the list
+            // order disagree with the timestamps each row displays.
             await database
                 .update(pageVersionHistory)
                 .set({
                     createdAt: new Date(),
                     createdBy,
                     changeDescription,
+                    version,
                 })
                 .where(eq(pageVersionHistory.id, existingVersion.id))
 
@@ -96,6 +101,7 @@ export async function saveVersionHistoryWithDeduplication(
                         createdAt: new Date(),
                         createdBy,
                         changeDescription,
+                        version,
                     })
                     .where(eq(pageVersionHistory.id, existingVersion.id))
 
