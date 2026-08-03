@@ -7,6 +7,13 @@ const isApiRoute = createRouteMatcher(['/api(.*)'])
 // Public form submission links — shareable with people who have no account.
 // The form itself still gates access (published/accepting responses).
 const isPublicFormRoute = createRouteMatcher(['/forms/:id(\\d+)/submit'])
+// Landing page, privacy policy and terms. These MUST stay reachable without
+// signing in: Google requires a publicly accessible home page, privacy policy
+// and terms of service before an OAuth app using sensitive scopes (we request
+// Calendar) can be published. Behind a sign-in redirect they do not qualify.
+// '/' renders a landing page for signed-out visitors and redirects everyone
+// else to /dashboard, so this does not open up any workspace content.
+const isPublicMarketingRoute = createRouteMatcher(['/', '/privacy', '/terms'])
 const isSupabaseRoute = createRouteMatcher([
     '/pages/:id(\\d+)',
     '/sheets/:id(\\d+)',
@@ -15,7 +22,11 @@ const isSupabaseRoute = createRouteMatcher([
 ])
 
 export default clerkMiddleware(async (auth, req: NextRequest) => {
-    if (isApiRoute(req) || isPublicFormRoute(req)) {
+    if (
+        isApiRoute(req) ||
+        isPublicFormRoute(req) ||
+        isPublicMarketingRoute(req)
+    ) {
         return NextResponse.next()
     }
 
