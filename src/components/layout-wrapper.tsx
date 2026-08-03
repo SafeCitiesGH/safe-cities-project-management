@@ -22,12 +22,10 @@ export function LayoutWrapper({ children }: LayoutWrapperProps) {
 
     // Routes that should not show the sidebar. Public form submission pages
     // are shared with people outside the workspace, so no app chrome. The
-    // landing page, privacy policy and terms are reachable signed-out, where
+    // about page, privacy policy and terms are reachable signed-out, where
     // the sidebar's authenticated queries would have nothing to load.
-    const noSidebarRoutes = ['/onboarding', '/privacy', '/terms']
-    // '/' is matched exactly — startsWith('/') would match every route.
+    const noSidebarRoutes = ['/onboarding', '/about', '/privacy', '/terms']
     const shouldHideSidebar =
-        pathname === '/' ||
         noSidebarRoutes.some((route) => pathname.startsWith(route)) ||
         /^\/forms\/\d+\/submit/.test(pathname)
 

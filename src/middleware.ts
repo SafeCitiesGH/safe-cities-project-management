@@ -7,13 +7,17 @@ const isApiRoute = createRouteMatcher(['/api(.*)'])
 // Public form submission links — shareable with people who have no account.
 // The form itself still gates access (published/accepting responses).
 const isPublicFormRoute = createRouteMatcher(['/forms/:id(\\d+)/submit'])
-// Landing page, privacy policy and terms. These MUST stay reachable without
+// About page, privacy policy and terms. These MUST stay reachable without
 // signing in: Google requires a publicly accessible home page, privacy policy
 // and terms of service before an OAuth app using sensitive scopes (we request
 // Calendar) can be published. Behind a sign-in redirect they do not qualify.
-// '/' renders a landing page for signed-out visitors and redirects everyone
-// else to /dashboard, so this does not open up any workspace content.
-const isPublicMarketingRoute = createRouteMatcher(['/', '/privacy', '/terms'])
+// '/' is deliberately NOT in this list — it still sends everyone to sign in,
+// exactly as before. /about is the home page URL given to Google instead.
+const isPublicMarketingRoute = createRouteMatcher([
+    '/about',
+    '/privacy',
+    '/terms',
+])
 const isSupabaseRoute = createRouteMatcher([
     '/pages/:id(\\d+)',
     '/sheets/:id(\\d+)',

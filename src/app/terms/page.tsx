@@ -176,8 +176,8 @@ export default function TermsOfServicePage() {
 
             <div className="mt-16 border-t pt-6 text-sm text-muted-foreground">
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
-                    <Link href="/" className="hover:text-foreground">
-                        Home
+                    <Link href="/about" className="hover:text-foreground">
+                        About
                     </Link>
                     <Link href="/privacy" className="hover:text-foreground">
                         Privacy Policy
